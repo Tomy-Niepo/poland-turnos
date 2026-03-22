@@ -1,6 +1,7 @@
 import time
 import base64
 import io
+import os
 import numpy as np
 import cv2
 import easyocr
@@ -13,9 +14,16 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Webhook URL for n8n
-N8N_WEBHOOK_URL = "https://auto.proceg.com/webhook/2f65b5c0-44ef-4c22-b56e-ba9a2b506a76"
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
+
+if not N8N_WEBHOOK_URL:
+    print("WARNING: N8N_WEBHOOK_URL not found in environment variables.")
 
 # Initialize EasyOCR Reader
 print("Initializing EasyOCR...")
