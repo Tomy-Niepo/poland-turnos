@@ -1,8 +1,10 @@
 import time
 import base64
 import io
-from PIL import Image, ImageOps, ImageFilter
-import pytesseract
+import numpy as np
+import cv2
+import easyocr
+from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -10,6 +12,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+
+# Initialize EasyOCR Reader (English)
+# Note: This will download models (~150MB) on first run
+print("Initializing EasyOCR...")
+reader = easyocr.Reader(['en'])
 
 def select_mat_option(driver, wait, select_element, option_index, description=""):
     """Helper to click a mat-select and choose an option by index."""
@@ -36,7 +43,7 @@ def select_mat_option(driver, wait, select_element, option_index, description=""
         print(f"Error selecting option: {e}")
 
 def solve_captcha(driver, wait):
-    """Finds the CAPTCHA image, performs OCR, and fills the input field."""
+    """Finds the CAPTCHA image, performs OCR with EasyOCR, and fills the input field."""
     try:
         print("Locating CAPTCHA image...")
         captcha_img = wait.until(EC.presence_of_element_located((By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")))
@@ -46,32 +53,36 @@ def solve_captcha(driver, wait):
         if "base64," in img_base64:
             base64_data = img_base64.split("base64,")[1]
             
-            # Decode image
+            # Decode image to numpy array for OpenCV
             img_bytes = base64.b64decode(base64_data)
-            image = Image.open(io.BytesIO(img_bytes))
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
-            # Basic Pre-processing to help Tesseract
-            # Convert to grayscale and increase contrast
-            image = image.convert('L')
-            image = ImageOps.autocontrast(image)
-            # Thresholding to binary (black/white)
-            image = image.point(lambda x: 0 if x < 128 else 255, '1')
+            # Pre-processing with OpenCV
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # Denoise
+            denoised = cv2.fastNlMeansDenoising(gray, h=10)
+            # Rescale (upscale for better OCR)
+            upscaled = cv2.resize(denoised, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
             
-            # OCR config: single word, only alphanumeric
-            captcha_text = pytesseract.image_to_string(image, config='--psm 8').strip()
-            print(f"\n>>> OCR RESULT: '{captcha_text}' <<<\n")
+            # Perform OCR using EasyOCR
+            # allowlist restricts characters if you know it's only letters
+            results = reader.readtext(upscaled, detail=0, allowlist='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+            captcha_text = "".join(results).strip()
             
-            # Locate the input field using the provided aria-label
+            print(f"\n>>> EASYOCR RESULT: '{captcha_text}' <<<\n")
+            
+            # Locate input field
             print("Locating CAPTCHA input field (aria-label='Znaki z obrazka')...")
-            # Using a specific selector based on user input
             captcha_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Znaki z obrazka']")))
             
-            # Scroll to it
+            # Interaction: Click, Clear, Send Keys
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", captcha_input)
             time.sleep(1)
-            
+            captcha_input.click()
             captcha_input.clear()
             captcha_input.send_keys(captcha_text)
+            
             print(f"CAPTCHA field filled with: {captcha_text}")
             return True
     except Exception as e:
@@ -96,16 +107,15 @@ def main():
         print("Waiting 8 seconds for page load...")
         time.sleep(8)
 
-        # Scroll to bottom to ensure everything is rendered
+        # Scroll to bottom
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
 
-        # Handle dropdowns
+        # Dropdowns
         all_selects = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-select")))
         if len(all_selects) >= 3:
             select_mat_option(driver, wait, all_selects[1], 2, "First Form Dropdown")
             time.sleep(5)
-            # Re-fetch as DOM updates
             all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
             if len(all_selects) >= 3:
                 select_mat_option(driver, wait, all_selects[2], 2, "Second Form Dropdown")
