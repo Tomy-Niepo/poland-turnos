@@ -12,7 +12,7 @@ This project provides a Python script using Selenium that automates initial brow
 ### 1. Clone or Navigate to the Directory
 If you haven't already, navigate to the project root:
 ```bash
-cd /Users/tomasnieponice/Documents/Projectsandcode/webscrape_poland
+cd /your-path/webscrape_poland
 ```
 
 ### 2. Create a Virtual Environment (Recommended)
