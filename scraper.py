@@ -45,7 +45,7 @@ def solve_captcha(driver, wait):
     """Finds the CAPTCHA image, performs OCR with EasyOCR, and fills the input field."""
     try:
         print("Locating CAPTCHA image...")
-        # Refresh the image element to handle potential refreshes
+        # Re-locate the image to handle refreshes
         captcha_img = wait.until(EC.presence_of_element_located((By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")))
         
         # Get the base64 source
@@ -83,6 +83,27 @@ def solve_captcha(driver, wait):
     except Exception as e:
         print(f"Failed to solve CAPTCHA: {e}")
         return False
+
+def check_for_failure(driver):
+    """Checks for error messages or popups indicating CAPTCHA failure."""
+    error_keywords = ["Nieprawidłowy", "Błędne", "kod", "spróbuj", "Błąd"]
+    
+    # Check for snackbar or dialog containers (common in Angular Material)
+    error_elements = driver.find_elements(By.XPATH, "//mat-snack-bar-container|//mat-dialog-container|//div[contains(@class, 'error')]")
+    
+    for element in error_elements:
+        if element.is_displayed():
+            text = element.text
+            print(f"Detected message: '{text}'")
+            if any(kw in text for kw in error_keywords):
+                return True
+    
+    # Also check the whole page source for common error text if no specific element is found
+    page_text = driver.page_source
+    if "Nieprawidłowy kod" in page_text or "Błędne znaki" in page_text:
+        return True
+        
+    return False
 
 def main():
     chrome_options = Options()
@@ -124,36 +145,44 @@ def main():
             # Click the button "Pobierz terminy wizyty"
             print("Clicking 'Pobierz terminy wizyty'...")
             try:
-                # Target by text content which is most reliable here
                 submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")))
                 driver.execute_script("arguments[0].click();", submit_button)
             except Exception as e:
                 print(f"Error finding/clicking submit button: {e}")
                 break
 
-            # Wait a few seconds for the result
-            time.sleep(5)
+            # Wait for either success message OR failure popup
+            print("Waiting for response...")
+            time.sleep(4)
             
-            # Check for error pop-ups/messages (e.g., wrong captcha)
-            # Typically these sites show a mat-error or a specific alert
-            error_msg = "Nieprawidłowy kod" # Common Polish for 'Invalid code'
-            page_text = driver.page_source
+            no_appointments_text = "Chwilowo wszystkie udostępnione terminy zostały zarezerwowane, prosimy spróbować umówić wizytę w terminie późniejszym."
             
-            if error_msg in page_text or "Błędne znaki" in page_text:
-                print("CAPTCHA was wrong. Retrying...")
-                # Optional: click image to refresh if it doesn't auto-refresh
+            # Check for failure popups first
+            if check_for_failure(driver):
+                print("CAPTCHA failure detected via popup/message. Retrying...")
+                # Refresh image by clicking it (often required if it doesn't auto-refresh)
+                try:
+                    captcha_img = driver.find_element(By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")
+                    captcha_img.click()
+                    time.sleep(2)
+                except:
+                    pass
                 continue
             
-            # Check for "no appointments" text
-            no_appointments_text = "Chwilowo wszystkie udostępnione terminy zostały zarezerwowane, prosimy spróbować umówić wizytę w terminie późniejszym."
-            if no_appointments_text in page_text:
+            # Check for the specific "no appointments" text
+            if no_appointments_text in driver.page_source:
                 print("\n[RESULT] No appointments available at the moment.")
-                print(f"Message found: '{no_appointments_text}'")
                 break
-            else:
-                # Check if we moved to a new state (e.g., a table appears or the button disappears)
-                # If the button is gone or the text isn't there, we might have appointments!
-                print("\n[ALERT] 'No appointments' message NOT found. Potential appointments available!")
+            
+            # If the button is still there and clickable, and we haven't seen the success text, it likely failed
+            try:
+                submit_button = driver.find_element(By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")
+                if submit_button.is_displayed():
+                    print("Submit button still present and no success message. Retrying CAPTCHA...")
+                    continue
+            except:
+                # Button is gone - potentially success or different state
+                print("\n[ALERT] Submit button disappeared. Potential appointments or state change!")
                 break
 
         print("\nAutomation steps completed. Session is now open for manual takeover.")
