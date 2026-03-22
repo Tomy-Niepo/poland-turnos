@@ -1,7 +1,7 @@
 import time
 import base64
 import io
-from PIL import Image
+from PIL import Image, ImageOps, ImageFilter
 import pytesseract
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -46,22 +46,33 @@ def solve_captcha(driver, wait):
         if "base64," in img_base64:
             base64_data = img_base64.split("base64,")[1]
             
-            # Decode and perform OCR
+            # Decode image
             img_bytes = base64.b64decode(base64_data)
             image = Image.open(io.BytesIO(img_bytes))
             
-            # OCR config: treat as a single word/string of alphanumeric characters
-            captcha_text = pytesseract.image_to_string(image, config='--psm 8').strip()
-            print(f"OCR Result: '{captcha_text}'")
+            # Basic Pre-processing to help Tesseract
+            # Convert to grayscale and increase contrast
+            image = image.convert('L')
+            image = ImageOps.autocontrast(image)
+            # Thresholding to binary (black/white)
+            image = image.point(lambda x: 0 if x < 128 else 255, '1')
             
-            # Locate the input field below the image
-            # Usually it's an input with a specific formControlName or near the image
-            print("Locating CAPTCHA input field...")
-            captcha_input = driver.find_element(By.XPATH, "//input[contains(@placeholder, 'kod') or contains(@id, 'captcha')]")
+            # OCR config: single word, only alphanumeric
+            captcha_text = pytesseract.image_to_string(image, config='--psm 8').strip()
+            print(f"\n>>> OCR RESULT: '{captcha_text}' <<<\n")
+            
+            # Locate the input field using the provided aria-label
+            print("Locating CAPTCHA input field (aria-label='Znaki z obrazka')...")
+            # Using a specific selector based on user input
+            captcha_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Znaki z obrazka']")))
+            
+            # Scroll to it
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", captcha_input)
+            time.sleep(1)
             
             captcha_input.clear()
             captcha_input.send_keys(captcha_text)
-            print("CAPTCHA field filled.")
+            print(f"CAPTCHA field filled with: {captcha_text}")
             return True
     except Exception as e:
         print(f"Failed to solve CAPTCHA: {e}")
@@ -85,17 +96,19 @@ def main():
         print("Waiting 8 seconds for page load...")
         time.sleep(8)
 
-        # Scroll to bottom
+        # Scroll to bottom to ensure everything is rendered
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
 
-        # Dropdowns
+        # Handle dropdowns
         all_selects = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-select")))
         if len(all_selects) >= 3:
             select_mat_option(driver, wait, all_selects[1], 2, "First Form Dropdown")
             time.sleep(5)
+            # Re-fetch as DOM updates
             all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
-            select_mat_option(driver, wait, all_selects[2], 2, "Second Form Dropdown")
+            if len(all_selects) >= 3:
+                select_mat_option(driver, wait, all_selects[2], 2, "Second Form Dropdown")
         
         time.sleep(3)
         
@@ -103,6 +116,8 @@ def main():
         solve_captcha(driver, wait)
 
         print("\nAutomation steps completed. Session is now open for manual takeover.")
+        print("Press Ctrl+C in this terminal to stop the script. The browser will remain open.")
+        
         while True:
             time.sleep(1)
 
