@@ -14,7 +14,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # Initialize EasyOCR Reader (English)
-# Note: This will download models (~150MB) on first run
 print("Initializing EasyOCR...")
 reader = easyocr.Reader(['en'])
 
@@ -46,6 +45,7 @@ def solve_captcha(driver, wait):
     """Finds the CAPTCHA image, performs OCR with EasyOCR, and fills the input field."""
     try:
         print("Locating CAPTCHA image...")
+        # Refresh the image element to handle potential refreshes
         captcha_img = wait.until(EC.presence_of_element_located((By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")))
         
         # Get the base64 source
@@ -58,25 +58,20 @@ def solve_captcha(driver, wait):
             nparr = np.frombuffer(img_bytes, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
-            # Pre-processing with OpenCV
+            # Pre-processing
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            # Denoise
             denoised = cv2.fastNlMeansDenoising(gray, h=10)
-            # Rescale (upscale for better OCR)
             upscaled = cv2.resize(denoised, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
             
-            # Perform OCR using EasyOCR
-            # allowlist restricts characters if you know it's only letters
+            # Perform OCR
             results = reader.readtext(upscaled, detail=0, allowlist='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
             captcha_text = "".join(results).strip()
             
             print(f"\n>>> EASYOCR RESULT: '{captcha_text}' <<<\n")
             
             # Locate input field
-            print("Locating CAPTCHA input field (aria-label='Znaki z obrazka')...")
             captcha_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Znaki z obrazka']")))
             
-            # Interaction: Click, Clear, Send Keys
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", captcha_input)
             time.sleep(1)
             captcha_input.click()
@@ -111,7 +106,7 @@ def main():
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
 
-        # Dropdowns
+        # Dropdowns (Initial Setup)
         all_selects = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-select")))
         if len(all_selects) >= 3:
             select_mat_option(driver, wait, all_selects[1], 2, "First Form Dropdown")
@@ -122,8 +117,44 @@ def main():
         
         time.sleep(3)
         
-        # OCR / CAPTCHA
-        solve_captcha(driver, wait)
+        # CAPTCHA Loop
+        while True:
+            solve_captcha(driver, wait)
+            
+            # Click the button "Pobierz terminy wizyty"
+            print("Clicking 'Pobierz terminy wizyty'...")
+            try:
+                # Target by text content which is most reliable here
+                submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")))
+                driver.execute_script("arguments[0].click();", submit_button)
+            except Exception as e:
+                print(f"Error finding/clicking submit button: {e}")
+                break
+
+            # Wait a few seconds for the result
+            time.sleep(5)
+            
+            # Check for error pop-ups/messages (e.g., wrong captcha)
+            # Typically these sites show a mat-error or a specific alert
+            error_msg = "Nieprawidłowy kod" # Common Polish for 'Invalid code'
+            page_text = driver.page_source
+            
+            if error_msg in page_text or "Błędne znaki" in page_text:
+                print("CAPTCHA was wrong. Retrying...")
+                # Optional: click image to refresh if it doesn't auto-refresh
+                continue
+            
+            # Check for "no appointments" text
+            no_appointments_text = "Chwilowo wszystkie udostępnione terminy zostały zarezerwowane, prosimy spróbować umówić wizytę w terminie późniejszym."
+            if no_appointments_text in page_text:
+                print("\n[RESULT] No appointments available at the moment.")
+                print(f"Message found: '{no_appointments_text}'")
+                break
+            else:
+                # Check if we moved to a new state (e.g., a table appears or the button disappears)
+                # If the button is gone or the text isn't there, we might have appointments!
+                print("\n[ALERT] 'No appointments' message NOT found. Potential appointments available!")
+                break
 
         print("\nAutomation steps completed. Session is now open for manual takeover.")
         print("Press Ctrl+C in this terminal to stop the script. The browser will remain open.")
