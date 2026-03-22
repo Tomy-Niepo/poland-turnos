@@ -3,6 +3,8 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 def main():
@@ -15,26 +17,29 @@ def main():
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
-        # Open a sample URL (e.g., Google or a target of your choice)
-        url = "https://www.google.com"
+        # Navigate to the target URL
+        url = "https://recetario.com.ar/es"
         print(f"Opening {url}...")
         driver.get(url)
 
-        # Handle cookie consent if it appears (example of pressing a button)
-        try:
-            # This is a common pattern for Google cookie consent in some regions
-            reject_button = driver.find_element(By.XPATH, "//button[contains(., 'Reject all')]")
-            reject_button.click()
-            print("Clicked 'Reject all' button.")
-        except Exception:
-            print("No cookie consent button found or already handled.")
+        # Wait for the 'Solicitá una demo' button to be clickable
+        print("Waiting for 'Solicitá una demo' button...")
+        wait = WebDriverWait(driver, 10)
+        
+        # Use XPath to find the button by its text content
+        # This is more robust than long utility class strings
+        demo_button_xpath = "//button[contains(text(), 'Solicitá una demo')]"
+        
+        demo_button = wait.until(EC.element_to_be_clickable((By.XPATH, demo_button_xpath)))
+        
+        print("Clicking 'Solicitá una demo' button...")
+        demo_button.click()
+        print("Button clicked successfully.")
 
         # Keep the session open for manual takeover
-        print("Session is now open. You can take over the browser.")
-        print("Press Ctrl+C in this terminal to close the script, but the browser will stay open due to 'detach' option.")
+        print("\nSession is now open. You can take over the browser.")
+        print("Press Ctrl+C in this terminal to stop the script. The browser will remain open.")
         
-        # Wait indefinitely to keep the script running if needed, 
-        # though 'detach' keeps the browser alive.
         while True:
             time.sleep(1)
 
