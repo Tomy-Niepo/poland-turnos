@@ -124,10 +124,15 @@ def main():
     wait = WebDriverWait(driver, 20)
 
     url = "https://secure.e-konsulat.gov.pl/placowki/164/sprawy-paszportowe/wizyty/formularz"
+    
+    start_time = time.time()
+    attempts = 0
+    captcha_solved = 0
 
     try:
         while True:
-            print(f"\n--- Starting new attempt at {time.strftime('%H:%M:%S')} ---")
+            attempts += 1
+            print(f"\n--- Starting attempt #{attempts} at {time.strftime('%H:%M:%S')} ---")
             print(f"Opening {url}...")
             driver.get(url)
 
@@ -157,6 +162,7 @@ def main():
             success = False
             while True:
                 solve_captcha(driver, wait)
+                captcha_solved += 1
                 print("Clicking 'Pobierz terminy wizyty'...")
                 try:
                     submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")))
@@ -198,11 +204,26 @@ def main():
                     break
 
             if success:
-                print("Process completed successfully. Browser left open.")
+                end_time = time.time()
+                duration = end_time - start_time
+                print("\n" + "="*40)
+                print("SUCCESSFUL RUN SUMMARY")
+                print(f"Total time: {duration/60:.2f} minutes")
+                print(f"Total attempts: {attempts}")
+                print(f"CAPTCHA attempts: {captcha_solved}")
+                print("="*40)
                 return # Stop script
 
     except KeyboardInterrupt:
-        print("\nScript stopped by user.")
+        end_time = time.time()
+        duration = end_time - start_time
+        print("\n" + "="*40)
+        print("RUN SUMMARY (Interrupted by user)")
+        print(f"Total time: {duration/60:.2f} minutes")
+        print(f"Total attempts (refreshes): {attempts}")
+        print(f"Total CAPTCHA attempts: {captcha_solved}")
+        print("="*40)
+        print("Script stopped by user.")
     except Exception as e:
         print(f"An error occurred: {e}")
         # On fatal error, keep browser open for inspection
