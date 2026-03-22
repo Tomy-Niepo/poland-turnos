@@ -115,69 +115,90 @@ def main():
     driver = webdriver.Chrome(service=service, options=chrome_options)
     wait = WebDriverWait(driver, 20)
 
+    url = "https://secure.e-konsulat.gov.pl/placowki/164/sprawy-paszportowe/wizyty/formularz"
+
     try:
-        url = "https://secure.e-konsulat.gov.pl/placowki/164/sprawy-paszportowe/wizyty/formularz"
-        print(f"Opening {url}...")
-        driver.get(url)
-
-        print("Waiting 8 seconds for page load...")
-        time.sleep(8)
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)
-
-        # Handle dropdowns
-        all_selects = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-select")))
-        if len(all_selects) >= 3:
-            select_mat_option(driver, wait, all_selects[1], 2, "First Form Dropdown")
-            time.sleep(5)
-            all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
-            if len(all_selects) >= 3:
-                select_mat_option(driver, wait, all_selects[2], 2, "Second Form Dropdown")
-        
-        time.sleep(3)
-        
         while True:
-            solve_captcha(driver, wait)
-            print("Clicking 'Pobierz terminy wizyty'...")
-            try:
-                submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")))
-                driver.execute_script("arguments[0].click();", submit_button)
-            except Exception as e:
-                print(f"Error finding submit button: {e}")
-                break
+            print(f"\n--- Starting new attempt at {time.strftime('%H:%M:%S')} ---")
+            print(f"Opening {url}...")
+            driver.get(url)
 
-            print("Waiting for response...")
-            time.sleep(5)
-            
-            # 1. Check for CAPTCHA failure
-            if check_for_failure(driver):
-                print("CAPTCHA failure detected. Retrying...")
-                try:
-                    captcha_img = driver.find_element(By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")
-                    captcha_img.click()
-                    time.sleep(2)
-                except: pass
+            print("Waiting 8 seconds for page load...")
+            time.sleep(8)
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+
+            # Handle dropdowns
+            try:
+                all_selects = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-select")))
+                if len(all_selects) >= 3:
+                    select_mat_option(driver, wait, all_selects[1], 2, "First Form Dropdown")
+                    time.sleep(5)
+                    all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
+                    if len(all_selects) >= 3:
+                        select_mat_option(driver, wait, all_selects[2], 2, "Second Form Dropdown")
+                else:
+                    print("Could not find expected dropdowns. Refreshing...")
+                    continue
+            except Exception as e:
+                print(f"Error selecting options: {e}. Refreshing...")
                 continue
             
-            # 2. Check for "No appointments" text
-            no_appointments_text = "Chwilowo wszystkie udostępnione terminy zostały zarezerwowane, prosimy spróbować umówić wizytę w terminie późniejszym."
-            if no_appointments_text in driver.page_source:
-                print("\n[RESULT] No appointments available. Closing window and stopping script.")
-                driver.quit() # Close browser
-                return # Stop script
+            time.sleep(3)
             
-            # 3. Check if the button is still there (another failure mode)
-            try:
-                submit_button = driver.find_element(By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")
-                if submit_button.is_displayed():
-                    print("Submit button still present, retrying CAPTCHA...")
+            success = False
+            while True:
+                solve_captcha(driver, wait)
+                print("Clicking 'Pobierz terminy wizyty'...")
+                try:
+                    submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")))
+                    driver.execute_script("arguments[0].click();", submit_button)
+                except Exception as e:
+                    print(f"Error finding submit button: {e}. Restarting process...")
+                    break # Restart whole process
+
+                print("Waiting for response...")
+                time.sleep(5)
+                
+                # 1. Check for CAPTCHA failure
+                if check_for_failure(driver):
+                    print("CAPTCHA failure detected. Retrying...")
+                    try:
+                        captcha_img = driver.find_element(By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")
+                        captcha_img.click()
+                        time.sleep(2)
+                    except: pass
                     continue
-            except:
-                # Button is gone - potentially success!
-                print("\n[ALERT] Appointments might be available! Triggering webhook and leaving session open.")
-                trigger_webhook()
-                # Leave browser open and script stops naturally
-                return
+                
+                # 2. Check for "No appointments" text
+                no_appointments_text = "Chwilowo wszystkie udostępnione terminy zostały zarezerwowane, prosimy spróbować umówić wizytę w terminie późniejszym."
+                if no_appointments_text in driver.page_source:
+                    print("\n[RESULT] No appointments available. Refreshing page and restarting process...")
+                    break # Break inner loop to restart the whole process
+                
+                # 3. Check if the button is still there (another failure mode)
+                try:
+                    submit_button = driver.find_element(By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")
+                    if submit_button.is_displayed():
+                        print("Submit button still present, retrying CAPTCHA...")
+                        continue
+                except:
+                    # Button is gone - potentially success!
+                    print("\n[ALERT] Appointments might be available! Triggering webhook and leaving session open.")
+                    trigger_webhook()
+                    success = True
+                    break
+
+            if success:
+                print("Process completed successfully. Browser left open.")
+                return # Stop script
+
+    except KeyboardInterrupt:
+        print("\nScript stopped by user.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        # On fatal error, keep browser open for inspection
+        while True: time.sleep(1)
 
     except KeyboardInterrupt:
         print("\nScript stopped by user.")
