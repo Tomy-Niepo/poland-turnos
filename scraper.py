@@ -11,26 +11,29 @@ def select_mat_option(driver, wait, select_element, option_index, description=""
     """Helper to click a mat-select and choose an option by index."""
     print(f"Targeting dropdown: {description}")
     
-    # Scroll and ensure clickable
+    # Ensure the element is in view
     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", select_element)
     time.sleep(1) 
     
     try:
+        # Wait until it's actually clickable
         wait.until(EC.element_to_be_clickable(select_element))
         select_element.click()
         print(f"Clicked {description}. Waiting for options...")
     except Exception as e:
-        print(f"Failed to click {description}: {e}")
+        print(f"Failed to click {description} using standard click: {e}")
         # Try JavaScript click as fallback
         driver.execute_script("arguments[0].click();", select_element)
 
     # Wait for the options to appear in the overlay
-    time.sleep(1) # Wait for animation
+    time.sleep(1.5) # Wait for animation and population
     try:
+        # Options are usually appended to the end of the body in a cdk-overlay-container
         options = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-option")))
         if len(options) >= option_index:
             print(f"Selecting option {option_index} for {description}...")
-            options[option_index - 1].click()
+            # Using JavaScript click for the option to avoid interception issues
+            driver.execute_script("arguments[0].click();", options[option_index - 1])
             print(f"Option {option_index} selected for {description}.")
         else:
             print(f"Error: Found only {len(options)} options for {description}, needed {option_index}")
@@ -52,31 +55,39 @@ def main():
         print(f"Opening {url}...")
         driver.get(url)
 
-        # Wait 5 seconds for the page and Angular components to stabilize
-        print("Waiting 5 seconds for page load...")
-        time.sleep(5)
+        # Initial wait for the page to load
+        print("Waiting 7 seconds for page load...")
+        time.sleep(7)
+
+        # Scroll to the bottom to ensure all elements are rendered/visible
+        print("Scrolling to the bottom of the page...")
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
 
         # 1st Dropdown
         print("Locating first dropdown...")
         all_selects = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-select")))
+        print(f"Found {len(all_selects)} total mat-select elements.")
+        
         if len(all_selects) > 0:
+            # If the script was grabbing the wrong one, maybe it's not the first one.
+            # But usually, it's the first visible one in the form area.
             select_mat_option(driver, wait, all_selects[0], 2, "First Dropdown")
         else:
             print("Error: No mat-select elements found.")
 
-        # Wait for the second dropdown to populate (often dependent on the first)
-        print("Waiting 3 seconds for second dropdown to update...")
-        time.sleep(3)
+        # Wait for the second dropdown to populate
+        print("Waiting 4 seconds for second dropdown to update...")
+        time.sleep(4)
 
         # 2nd Dropdown
         print("Locating second dropdown...")
-        # Refresh the list of selects as the DOM may have changed
+        # Refresh the list
         all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
         if len(all_selects) >= 2:
             select_mat_option(driver, wait, all_selects[1], 2, "Second Dropdown")
         else:
-            print(f"Waiting for second mat-select to appear (currently found {len(all_selects)})...")
-            # Specific wait for at least two selects
+            print("Waiting for second mat-select to appear...")
             wait.until(lambda d: len(d.find_elements(By.TAG_NAME, "mat-select")) >= 2)
             all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
             select_mat_option(driver, wait, all_selects[1], 2, "Second Dropdown")
