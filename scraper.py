@@ -13,7 +13,7 @@ def select_mat_option(driver, wait, select_element, option_index, description=""
     
     # Ensure the element is in view
     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", select_element)
-    time.sleep(1) 
+    time.sleep(1.5) 
     
     try:
         # Wait until it's actually clickable
@@ -26,10 +26,11 @@ def select_mat_option(driver, wait, select_element, option_index, description=""
         driver.execute_script("arguments[0].click();", select_element)
 
     # Wait for the options to appear in the overlay
-    time.sleep(1.5) # Wait for animation and population
+    time.sleep(2) # Wait for animation and population
     try:
         # Options are usually appended to the end of the body in a cdk-overlay-container
         options = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-option")))
+        print(f"Found {len(options)} options for {description}.")
         if len(options) >= option_index:
             print(f"Selecting option {option_index} for {description}...")
             # Using JavaScript click for the option to avoid interception issues
@@ -56,41 +57,40 @@ def main():
         driver.get(url)
 
         # Initial wait for the page to load
-        print("Waiting 7 seconds for page load...")
-        time.sleep(7)
+        print("Waiting 8 seconds for page load...")
+        time.sleep(8)
 
-        # Scroll to the bottom to ensure all elements are rendered/visible
+        # Scroll to the bottom to ensure all elements are rendered
         print("Scrolling to the bottom of the page...")
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
 
-        # 1st Dropdown
-        print("Locating first dropdown...")
+        # 1st Action: Targeting the SECOND dropdown on the page (skipping language)
+        print("Locating form dropdowns (skipping language select)...")
         all_selects = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-select")))
         print(f"Found {len(all_selects)} total mat-select elements.")
         
-        if len(all_selects) > 0:
-            # If the script was grabbing the wrong one, maybe it's not the first one.
-            # But usually, it's the first visible one in the form area.
-            select_mat_option(driver, wait, all_selects[0], 2, "First Dropdown")
-        else:
-            print("Error: No mat-select elements found.")
-
-        # Wait for the second dropdown to populate
-        print("Waiting 4 seconds for second dropdown to update...")
-        time.sleep(4)
-
-        # 2nd Dropdown
-        print("Locating second dropdown...")
-        # Refresh the list
-        all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
         if len(all_selects) >= 2:
-            select_mat_option(driver, wait, all_selects[1], 2, "Second Dropdown")
+            # all_selects[0] is language, all_selects[1] is the first form dropdown
+            select_mat_option(driver, wait, all_selects[1], 2, "First Form Dropdown (Index 1)")
         else:
-            print("Waiting for second mat-select to appear...")
-            wait.until(lambda d: len(d.find_elements(By.TAG_NAME, "mat-select")) >= 2)
+            print(f"Error: Expected at least 2 dropdowns, found {len(all_selects)}.")
+
+        # Wait for the next dropdown to populate
+        print("Waiting 5 seconds for next dropdown to update...")
+        time.sleep(5)
+
+        # 2nd Action: Targeting the THIRD dropdown on the page
+        print("Locating next form dropdown...")
+        all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
+        if len(all_selects) >= 3:
+            # all_selects[2] is the second form dropdown
+            select_mat_option(driver, wait, all_selects[2], 2, "Second Form Dropdown (Index 2)")
+        else:
+            print(f"Waiting for third mat-select to appear...")
+            wait.until(lambda d: len(d.find_elements(By.TAG_NAME, "mat-select")) >= 3)
             all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
-            select_mat_option(driver, wait, all_selects[1], 2, "Second Dropdown")
+            select_mat_option(driver, wait, all_selects[2], 2, "Second Form Dropdown (Index 2)")
 
         print("\nAutomation steps completed. Session is now open for manual takeover.")
         print("Press Ctrl+C in this terminal to stop the script. The browser will remain open.")
