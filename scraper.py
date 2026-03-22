@@ -39,8 +39,7 @@ def main():
             time.sleep(1)
 
     except KeyboardInterrupt:
-        print("
-Script stopped by user.")
+        print("\nScript stopped by user.")
     except Exception as e:
         print(f"An error occurred: {e}")
 
