@@ -1,4 +1,6 @@
 selenium
 webdriver-manager
-pytesseract
+easyocr
 Pillow
+opencv-python-headless
+numpy
