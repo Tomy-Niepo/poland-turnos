@@ -200,6 +200,16 @@ def main():
                     # Button is gone - potentially success!
                     print("\n[ALERT] Appointments might be available! Triggering webhook and leaving session open.")
                     trigger_webhook()
+                    
+                    # Take a screenshot
+                    timestamp = time.strftime("%Y%m%d-%H%M%S")
+                    screenshot_name = f"appointments_found_{timestamp}.png"
+                    try:
+                        driver.save_screenshot(screenshot_name)
+                        print(f"Screenshot saved as {screenshot_name}")
+                    except Exception as e:
+                        print(f"Failed to save screenshot: {e}")
+
                     success = True
                     break
 
