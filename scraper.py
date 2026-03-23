@@ -232,7 +232,8 @@ def main():
             if args.test:
                 # In test mode, we take a screenshot no matter what
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
-                screenshot_name = f"test_result_{timestamp}.png"
+                os.makedirs("results", exist_ok=True)
+                screenshot_name = f"results/test_result_{timestamp}.png"
                 try:
                     driver.save_screenshot(screenshot_name)
                     log(f"Test screenshot saved as {screenshot_name}", verbose)
@@ -252,7 +253,8 @@ def main():
             if success:
                 # This block only reached if not in test mode and success is True
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
-                screenshot_name = f"appointments_found_{timestamp}.png"
+                os.makedirs("results", exist_ok=True)
+                screenshot_name = f"results/appointments_found_{timestamp}.png"
                 try:
                     driver.save_screenshot(screenshot_name)
                     print(f"Screenshot saved as {screenshot_name}")
