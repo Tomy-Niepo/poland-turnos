@@ -284,10 +284,14 @@ def run_scraper(instance_id, args, stop_event, driver_path):
             driver.get(url)
 
             log("Waiting 8 seconds for page load...", verbose, instance_id)
-            time.sleep(8)
+            # Use shorter sleeps or check event to be more responsive
+            for _ in range(16): 
+                if stop_event.is_set(): break
+                time.sleep(0.5)
+            
             if stop_event.is_set(): break
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
+            time.sleep(1)
 
             # Handle dropdowns
             try:
@@ -295,7 +299,7 @@ def run_scraper(instance_id, args, stop_event, driver_path):
                 log(f"Found {len(all_selects)} mat-select elements.", verbose, instance_id)
                 if len(all_selects) >= 3:
                     select_mat_option(driver, wait, all_selects[1], 2, "First Form Dropdown", verbose, instance_id)
-                    time.sleep(5)
+                    time.sleep(3)
                     if stop_event.is_set(): break
                     all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
                     if len(all_selects) >= 3:
@@ -309,7 +313,7 @@ def run_scraper(instance_id, args, stop_event, driver_path):
                 if args.test: break
                 continue
             
-            time.sleep(3)
+            time.sleep(2)
             if stop_event.is_set(): break
             
             success = False
@@ -325,7 +329,10 @@ def run_scraper(instance_id, args, stop_event, driver_path):
                     break # Restart whole process
 
                 log("Waiting for response...", verbose, instance_id)
-                time.sleep(5)
+                for _ in range(10):
+                    if stop_event.is_set(): break
+                    time.sleep(0.5)
+                
                 if stop_event.is_set(): break
                 
                 # 1. Check for CAPTCHA failure
@@ -359,8 +366,8 @@ def run_scraper(instance_id, args, stop_event, driver_path):
                     # Button is gone - potentially success!
                     log("\n[ALERT] Appointments might be available! Triggering webhook and leaving session open.", verbose, instance_id)
                     trigger_webhook(verbose, instance_id)
-                    stop_event.set() # STOP ALL OTHER INSTANCES
                     success = True
+                    stop_event.set() # STOP ALL OTHER INSTANCES
                     break
 
             if args.test:
@@ -382,6 +389,7 @@ def run_scraper(instance_id, args, stop_event, driver_path):
                 log(f"Total time: {duration/60:.2f} minutes", verbose, instance_id)
                 log(f"CAPTCHA attempts: {captcha_solved}", verbose, instance_id)
                 log("="*40, verbose, instance_id)
+                driver.quit()
                 return
 
             if success:
@@ -403,13 +411,23 @@ def run_scraper(instance_id, args, stop_event, driver_path):
                 print(f"Total attempts: {attempts}")
                 print(f"CAPTCHA attempts: {captcha_solved}")
                 print("="*40)
-                # Keep browser open as before
-                while True: time.sleep(1)
+                
+                # Keep browser open until manually stopped
+                try:
+                    while True: time.sleep(1)
+                except KeyboardInterrupt:
+                    log("Closing successful window...", False, instance_id)
+                    driver.quit()
+                    return
 
-        if stop_event.is_set() and not success:
-            log("Stopping instance because another one succeeded or user interrupted.", False, instance_id)
+        # If we reach here, it's either because stop_event was set or loop finished
+        if not success:
+            log("Closing browser instance.", False, instance_id)
             driver.quit()
 
+    except KeyboardInterrupt:
+        log("Interrupted. Closing browser...", False, instance_id)
+        driver.quit()
     except Exception as e:
         log(f"An error occurred: {e}", False, instance_id)
         driver.quit()
@@ -445,8 +463,9 @@ def main():
         print("\nMain script interrupted by user. Stopping all instances...")
         stop_event.set()
         for p in processes:
-            p.terminate()
-            p.join()
+            p.join(timeout=2)
+            if p.is_alive():
+                p.terminate()
         print("All instances stopped.")
 
 if __name__ == "__main__":
