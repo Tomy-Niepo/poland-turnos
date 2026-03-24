@@ -448,17 +448,3 @@ if __name__ == "__main__":
     # Fix for multiprocessing with easyocr and spawn
     multiprocessing.freeze_support()
     main()
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        # On fatal error, keep browser open for inspection
-        while True: time.sleep(1)
-
-    except KeyboardInterrupt:
-        print("\nScript stopped by user.")
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        # On fatal error, keep browser open for inspection
-        while True: time.sleep(1)
-
-if __name__ == "__main__":
-    main()
