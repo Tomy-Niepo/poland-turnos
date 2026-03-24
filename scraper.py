@@ -153,12 +153,37 @@ if not N8N_WEBHOOK_URL:
     print("WARNING: N8N_WEBHOOK_URL not found in environment variables.")
 
 def log(message, verbose=False, instance_id=None):
-    """Helper for conditional logging with instance ID."""
-    prefix = f"[Instance {instance_id}] " if instance_id is not None else ""
+    """Helper for conditional logging with instance ID and color coding."""
+    # ANSI color codes
+    RESET = "\033[0m"
+    COLORS = [
+        "\033[36m", # Cyan
+        "\033[35m", # Magenta
+        "\033[32m", # Green
+        "\033[33m", # Yellow
+        "\033[34m", # Blue
+        "\033[31m", # Red
+        "\033[96m", # Bright Cyan
+        "\033[95m", # Bright Magenta
+        "\033[92m", # Bright Green
+        "\033[93m", # Bright Yellow
+        "\033[94m", # Bright Blue
+        "\033[91m", # Bright Red
+    ]
+    
+    color = ""
+    prefix = ""
+    reset = ""
+    
+    if instance_id is not None:
+        color = COLORS[(instance_id - 1) % len(COLORS)]
+        prefix = f"[Instance {instance_id}] "
+        reset = RESET
+
     if verbose:
-        print(f"{prefix}[VERBOSE] {message}")
+        print(f"{color}{prefix}[VERBOSE] {message}{reset}")
     else:
-        print(f"{prefix}{message}")
+        print(f"{color}{prefix}{message}{reset}")
 
 def select_mat_option(driver, wait, select_element, option_index, description="", verbose=False, instance_id=None):
     """Helper to click a mat-select and choose an option by index."""
@@ -391,18 +416,18 @@ def run_scraper(instance_id, args, stop_event, driver_path):
                 screenshot_name = f"results/appointments_found_inst{instance_id}_{timestamp}.png"
                 try:
                     driver.save_screenshot(screenshot_name)
-                    print(f"[Instance {instance_id}] Screenshot saved as {screenshot_name}")
+                    log(f"Screenshot saved as {screenshot_name}", False, instance_id)
                 except Exception as e:
-                    print(f"[Instance {instance_id}] Failed to save screenshot: {e}")
+                    log(f"Failed to save screenshot: {e}", False, instance_id)
 
                 end_time = time.time()
                 duration = end_time - start_time
-                print("\n" + "="*40)
-                print(f"SUCCESSFUL RUN SUMMARY (Instance {instance_id})")
-                print(f"Total time: {duration/60:.2f} minutes")
-                print(f"Total attempts: {attempts}")
-                print(f"CAPTCHA attempts: {captcha_solved}")
-                print("="*40)
+                log("\n" + "="*40, False, instance_id)
+                log(f"SUCCESSFUL RUN SUMMARY", False, instance_id)
+                log(f"Total time: {duration/60:.2f} minutes", False, instance_id)
+                log(f"Total attempts: {attempts}", False, instance_id)
+                log(f"CAPTCHA attempts: {captcha_solved}", False, instance_id)
+                log("="*40, False, instance_id)
                 # Keep browser open as before
                 while True: time.sleep(1)
 
