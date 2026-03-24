@@ -152,10 +152,6 @@ N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
 if not N8N_WEBHOOK_URL:
     print("WARNING: N8N_WEBHOOK_URL not found in environment variables.")
 
-# Initialize EasyOCR Reader
-print("Initializing EasyOCR...")
-reader = easyocr.Reader(['en'])
-
 def log(message, verbose=False, instance_id=None):
     """Helper for conditional logging with instance ID."""
     prefix = f"[Instance {instance_id}] " if instance_id is not None else ""
@@ -188,7 +184,7 @@ def select_mat_option(driver, wait, select_element, option_index, description=""
     except Exception as e:
         log(f"Error selecting option: {e}", verbose, instance_id)
 
-def solve_captcha(driver, wait, verbose=False, instance_id=None):
+def solve_captcha(driver, wait, reader, verbose=False, instance_id=None):
     """Finds the CAPTCHA image, performs OCR with EasyOCR, and fills the input field."""
     try:
         log("Locating CAPTCHA image...", verbose, instance_id)
@@ -250,8 +246,13 @@ def trigger_webhook(verbose=False, instance_id=None):
     except Exception as e:
         log(f"Error triggering webhook: {e}", verbose, instance_id)
 
-def run_scraper(instance_id, args, stop_event):
+def run_scraper(instance_id, args, stop_event, driver_path):
     verbose = args.test
+    
+    # Initialize EasyOCR Reader inside each process
+    log(f"Initializing EasyOCR for Instance {instance_id}...", verbose, instance_id)
+    reader = easyocr.Reader(['en'], gpu=False) # GPU False to avoid conflicts
+
     chrome_options = Options()
     if not args.test:
         # If not testing, maybe we want headless to not clutter? 
@@ -265,7 +266,7 @@ def run_scraper(instance_id, args, stop_event):
     chrome_options.add_argument("--log-level=3")
     chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
 
-    service = Service(ChromeDriverManager().install())
+    service = Service(executable_path=driver_path)
     driver = webdriver.Chrome(service=service, options=chrome_options)
     wait = WebDriverWait(driver, 20)
 
@@ -313,7 +314,7 @@ def run_scraper(instance_id, args, stop_event):
             
             success = False
             while not stop_event.is_set():
-                solve_captcha(driver, wait, verbose, instance_id)
+                solve_captcha(driver, wait, reader, verbose, instance_id)
                 captcha_solved += 1
                 log("Clicking 'Pobierz terminy wizyty'...", verbose, instance_id)
                 try:
@@ -422,15 +423,19 @@ def main():
     num_instances = args.instances
     print(f"Starting {num_instances} parallel instances...")
 
+    print("Pre-installing ChromeDriver...")
+    driver_path = ChromeDriverManager().install()
+    print(f"Driver installed at: {driver_path}")
+
     stop_event = multiprocessing.Event()
     processes = []
 
     try:
         for i in range(num_instances):
-            p = multiprocessing.Process(target=run_scraper, args=(i+1, args, stop_event))
+            p = multiprocessing.Process(target=run_scraper, args=(i+1, args, stop_event, driver_path))
             p.start()
             processes.append(p)
-            time.sleep(2) # Stagger start to avoid collision on same resources/network
+            time.sleep(2) # Stagger start
 
         # Wait for processes
         for p in processes:
