@@ -400,19 +400,27 @@ def run_scraper(instance_id, args, stop_event, driver_path, log_queue):
                         log("Refreshing page and restarting process...", verbose, instance_id, log_queue)
                         break # Break inner loop to restart the whole process
                 
-                # 3. Check if the button is still there (another failure mode)
+                # 3. Check for the two new dropdowns that appear when appointments are available
+                current_selects = driver.find_elements(By.TAG_NAME, "mat-select")
+                if len(current_selects) >= 5:
+                    log(f"\n[ALERT] {len(current_selects)} dropdowns found! (Expected 3 initial + 2 new). Appointments are available!", verbose, instance_id, log_queue)
+                    trigger_webhook(verbose, instance_id, log_queue)
+                    stop_event.set() # STOP ALL OTHER INSTANCES
+                    success = True
+                    break
+
+                # 4. Check if the button is still there (CAPTCHA failure or slow load)
                 try:
                     submit_button = driver.find_element(By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")
                     if submit_button.is_displayed():
                         log("Submit button still present, retrying CAPTCHA...", verbose, instance_id, log_queue)
                         continue
                 except:
-                    # Button is gone - potentially success!
-                    log("\n[ALERT] Appointments might be available! Triggering webhook and leaving session open.", verbose, instance_id, log_queue)
-                    trigger_webhook(verbose, instance_id, log_queue)
-                    stop_event.set() # STOP ALL OTHER INSTANCES
-                    success = True
-                    break
+                    # Button is gone but we haven't found the dropdowns yet? 
+                    # This might happen during page transition.
+                    log("Button is gone, waiting for dropdowns to appear...", verbose, instance_id, log_queue)
+                    time.sleep(2)
+                    continue
 
             if args.test:
                 # In test mode, we take a screenshot no matter what
