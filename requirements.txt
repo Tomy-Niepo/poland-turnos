@@ -2,7 +2,8 @@ selenium
 webdriver-manager
 easyocr
 Pillow
-numpy
+numpy<2
+opencv-python-headless>=4.10
 requests
 python-dotenv
 flask
