@@ -15,6 +15,7 @@
         }
         h1 { font-size: 1.5rem; margin-bottom: 20px; color: #38bdf8; }
         h2 { font-size: 1.1rem; margin-bottom: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; font-weight: 500; }
+        h3 { font-size: 0.9rem; color: #64748b; margin-bottom: 8px; }
 
         .container { max-width: 1000px; margin: 0 auto; }
 
@@ -81,6 +82,32 @@
         .interval-row { display: none; }
         .interval-row.show { display: block; }
 
+        /* Instance time pickers */
+        .instance-times {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+        .instance-time-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+        .instance-time-row:last-child { margin-bottom: 0; }
+        .instance-time-row .inst-label {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            min-width: 80px;
+            font-weight: 600;
+        }
+        .instance-time-row input {
+            margin-bottom: 0;
+            flex: 1;
+        }
+
         /* Jobs table */
         table { width: 100%; border-collapse: collapse; }
         th {
@@ -96,6 +123,7 @@
             padding: 10px;
             border-bottom: 1px solid #1e293b;
             font-size: 0.85rem;
+            vertical-align: top;
         }
         tr:hover td { background: #1e293b; }
 
@@ -114,11 +142,15 @@
         .badge-cancelled { background: #4b5563; color: #d1d5db; }
         .badge-error { background: #7f1d1d; color: #fca5a5; }
 
-        /* Logs panel */
-        .logs-panel {
-            display: none;
-            margin-top: 12px;
+        .instance-badge {
+            display: inline-block;
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-right: 4px;
         }
+
+        /* Logs panel */
+        .logs-panel { display: none; margin-top: 12px; }
         .logs-panel.show { display: block; }
         .logs-header {
             display: flex;
@@ -143,12 +175,7 @@
         .log-line.alert { color: #34d399; font-weight: bold; }
         .log-line.error { color: #f87171; }
 
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: #64748b;
-        }
-
+        .empty-state { text-align: center; padding: 40px; color: #64748b; }
         .actions { display: flex; gap: 6px; }
     </style>
 </head>
@@ -172,18 +199,16 @@
                     <button class="active" onclick="setScheduleType('once', this)">One-time</button>
                     <button onclick="setScheduleType('recurring', this)">Recurring</button>
                 </div>
-                <div class="row">
-                    <div>
-                        <label>Date</label>
-                        <input type="date" id="schedDate">
-                    </div>
-                    <div>
-                        <label>Time</label>
-                        <input type="time" id="schedTime">
-                    </div>
+                <label>Date</label>
+                <input type="date" id="schedDate">
+
+                <label>Number of Instances</label>
+                <input type="number" id="schedInstances" min="1" max="10" value="1" oninput="renderInstanceTimes()">
+
+                <div id="instanceTimesContainer">
+                    <!-- Dynamically rendered per-instance time pickers -->
                 </div>
-                <label>Instances</label>
-                <input type="number" id="schedInstances" min="1" max="10" value="1">
+
                 <div class="interval-row" id="intervalRow">
                     <label>Repeat every (minutes)</label>
                     <input type="number" id="schedInterval" min="1" value="60">
@@ -213,18 +238,46 @@
     <script>
         let scheduleType = 'once';
         let activeLogSource = null;
-        let pollInterval = null;
 
-        // Set default date/time to now
+        // Set default date to today
         const now = new Date();
         document.getElementById('schedDate').value = now.toISOString().split('T')[0];
-        document.getElementById('schedTime').value = now.toTimeString().slice(0, 5);
+
+        // Render instance time pickers on load
+        renderInstanceTimes();
 
         function setScheduleType(type, btn) {
             scheduleType = type;
             document.querySelectorAll('.toggle-group button').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             document.getElementById('intervalRow').classList.toggle('show', type === 'recurring');
+        }
+
+        function renderInstanceTimes() {
+            const count = parseInt(document.getElementById('schedInstances').value) || 1;
+            const container = document.getElementById('instanceTimesContainer');
+            const defaultTime = now.toTimeString().slice(0, 5);
+
+            if (count === 1) {
+                container.innerHTML = `
+                    <label>Time</label>
+                    <input type="time" id="instTime_1" value="${defaultTime}">
+                `;
+            } else {
+                let html = '<div class="instance-times"><h3>Time per Instance</h3>';
+                for (let i = 1; i <= count; i++) {
+                    // Try to preserve existing values
+                    const existing = document.getElementById(`instTime_${i}`);
+                    const val = existing ? existing.value : defaultTime;
+                    html += `
+                        <div class="instance-time-row">
+                            <span class="inst-label">Instance ${i}</span>
+                            <input type="time" id="instTime_${i}" value="${val}">
+                        </div>`;
+                }
+                html += '</div>';
+                container.innerHTML = html;
+            }
         }
 
         async function runNow() {
@@ -241,15 +294,26 @@
 
         async function scheduleJob() {
             const date = document.getElementById('schedDate').value;
-            const time = document.getElementById('schedTime').value;
-            const instances = parseInt(document.getElementById('schedInstances').value) || 1;
+            const count = parseInt(document.getElementById('schedInstances').value) || 1;
             const interval = parseInt(document.getElementById('schedInterval').value) || 60;
 
-            if (!date || !time) { alert('Please set date and time'); return; }
+            if (!date) { alert('Please set a date'); return; }
+
+            // Collect per-instance times
+            const instance_times = [];
+            for (let i = 1; i <= count; i++) {
+                const timeInput = document.getElementById(`instTime_${i}`);
+                if (!timeInput || !timeInput.value) {
+                    alert(`Please set a time for Instance ${i}`);
+                    return;
+                }
+                instance_times.push({id: i, time: timeInput.value});
+            }
 
             const body = {
                 type: scheduleType,
-                date, time, instances,
+                date,
+                instance_times,
             };
             if (scheduleType === 'recurring') body.interval_minutes = interval;
 
@@ -288,6 +352,13 @@
             return d.toLocaleString();
         }
 
+        function renderInstanceTimes_display(instanceTimes) {
+            if (!instanceTimes || Object.keys(instanceTimes).length === 0) return '';
+            const entries = Object.entries(instanceTimes);
+            if (entries.length === 1) return entries[0][1];
+            return entries.map(([id, t]) => `<span class="instance-badge">Inst ${id}: ${t}</span>`).join(' ');
+        }
+
         async function refreshJobs() {
             const res = await fetch('/api/jobs');
             const jobs = await res.json();
@@ -306,10 +377,13 @@
             for (const j of jobs) {
                 const canCancel = ['running', 'starting', 'scheduled'].includes(j.status);
                 const shortId = j.job_id.slice(0, 8);
+                const timesDisplay = Object.keys(j.instance_times).length > 0
+                    ? renderInstanceTimes_display(j.instance_times)
+                    : formatTime(j.scheduled_time);
                 html += `<tr>
                     <td><code>${shortId}</code></td>
                     <td>${j.type}${j.interval_minutes ? ` (${j.interval_minutes}m)` : ''}</td>
-                    <td>${formatTime(j.scheduled_time)}</td>
+                    <td>${timesDisplay}</td>
                     <td>${j.instances}</td>
                     <td>${statusBadge(j.status)}</td>
                     <td class="actions">
@@ -324,7 +398,6 @@
         }
 
         function openLogs(jobId) {
-            // Close existing SSE
             if (activeLogSource) {
                 activeLogSource.close();
                 activeLogSource = null;

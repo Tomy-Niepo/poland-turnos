@@ -4,7 +4,7 @@ import uuid
 import threading
 import multiprocessing
 from datetime import datetime
-from queue import Queue, Empty
+from queue import Empty
 
 from flask import Flask, render_template, request, jsonify, Response
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -12,7 +12,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from webdriver_manager.chrome import ChromeDriverManager
 
-from scraper import run_scraper, log_listener
+from scraper import run_scraper
 
 app = Flask(__name__)
 
@@ -26,31 +26,26 @@ scheduler = BackgroundScheduler()
 scheduler.start()
 
 # In-memory state for all jobs
-# job_id -> { type, scheduled_time, instances, status, instance_results, logs, log_queue }
+# job_id -> { type, instances, status, instance_results, instance_times, logs, ... }
 jobs = {}
 jobs_lock = threading.Lock()
 
 
-def _run_job(job_id, num_instances):
-    """Execute a scraper job with N instances."""
+def _init_job_logging(job_id):
+    """Set up shared logging infrastructure for a job. Returns (mp_log_queue, stop_event, cleanup_fn)."""
     with jobs_lock:
-        if job_id not in jobs:
-            return
-        jobs[job_id]['status'] = 'running'
-        jobs[job_id]['started_at'] = datetime.now().isoformat()
-        log_list = jobs[job_id]['logs']
+        job = jobs[job_id]
+        log_list = job['logs']
 
-    log_list.append(f"[{time.strftime('%H:%M:%S')}] Job {job_id[:8]} starting with {num_instances} instance(s)...")
-
-    # Set up logging: use a multiprocessing queue + a thread to collect logs
     mp_log_queue = multiprocessing.Queue()
+    stop_event = multiprocessing.Event()
 
-    # Also write to a log file
     os.makedirs("logs", exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     log_file_path = f"logs/job_{job_id[:8]}_{timestamp}.txt"
 
-    # Log collector thread: reads from mp queue, appends to job logs list
+    all_done = threading.Event()
+
     def collect_logs():
         while True:
             try:
@@ -59,16 +54,13 @@ def _run_job(job_id, num_instances):
                     break
                 plain = record['text']
                 log_list.append(plain)
-                # Also write to file
                 try:
                     with open(log_file_path, "a", encoding="utf-8") as f:
                         f.write(plain + "\n")
                 except:
                     pass
             except Empty:
-                # Check if all processes are done
                 if all_done.is_set():
-                    # Drain remaining
                     while True:
                         try:
                             record = mp_log_queue.get_nowait()
@@ -79,16 +71,33 @@ def _run_job(job_id, num_instances):
                             break
                     break
 
-    all_done = threading.Event()
     collector = threading.Thread(target=collect_logs, daemon=True)
     collector.start()
 
-    stop_event = multiprocessing.Event()
-    config = {'verbose': True, 'test': False}
-    processes = []
-
     with jobs_lock:
         jobs[job_id]['stop_event'] = stop_event
+        jobs[job_id]['_mp_log_queue'] = mp_log_queue
+        jobs[job_id]['_all_done'] = all_done
+        jobs[job_id]['_collector'] = collector
+
+    return mp_log_queue, stop_event, all_done, collector
+
+
+def _run_job(job_id, num_instances):
+    """Execute a scraper job with N instances all starting now."""
+    with jobs_lock:
+        if job_id not in jobs:
+            return
+        jobs[job_id]['status'] = 'running'
+        jobs[job_id]['started_at'] = datetime.now().isoformat()
+        log_list = jobs[job_id]['logs']
+
+    log_list.append(f"[{time.strftime('%H:%M:%S')}] Job {job_id[:8]} starting with {num_instances} instance(s)...")
+
+    mp_log_queue, stop_event, all_done, collector = _init_job_logging(job_id)
+
+    config = {'verbose': True, 'test': False}
+    processes = []
 
     for i in range(num_instances):
         with jobs_lock:
@@ -103,7 +112,6 @@ def _run_job(job_id, num_instances):
         if i < num_instances - 1:
             time.sleep(1)
 
-    # Wait for all processes
     for inst_id, p in processes:
         p.join()
         with jobs_lock:
@@ -111,37 +119,83 @@ def _run_job(job_id, num_instances):
             if inst_result.get('status') == 'running':
                 inst_result['status'] = 'completed'
 
-    # Signal log collector to stop
+    _finalize_job(job_id, all_done, mp_log_queue, collector)
+
+
+def _finalize_job(job_id, all_done, mp_log_queue, collector):
+    """Clean up logging and set final job status."""
     all_done.set()
     mp_log_queue.put(None)
     collector.join(timeout=5)
 
-    # Determine final job status
     with jobs_lock:
+        if job_id not in jobs:
+            return
         found = any(
             r.get('status') == 'appointments_found'
             for r in jobs[job_id]['instance_results'].values()
         )
         jobs[job_id]['status'] = 'appointments_found' if found else 'completed'
         jobs[job_id]['finished_at'] = datetime.now().isoformat()
+        jobs[job_id]['logs'].append(
+            f"[{time.strftime('%H:%M:%S')}] Job {job_id[:8]} finished. Status: {jobs[job_id]['status']}"
+        )
 
-    log_list.append(f"[{time.strftime('%H:%M:%S')}] Job {job_id[:8]} finished. Status: {jobs[job_id]['status']}")
 
+def _launch_instance(job_id, instance_id):
+    """Launch a single instance for a scheduled job. Called by APScheduler at the instance's scheduled time."""
+    with jobs_lock:
+        if job_id not in jobs:
+            return
+        job = jobs[job_id]
+        # Mark job as running if it's still scheduled
+        if job['status'] == 'scheduled':
+            job['status'] = 'running'
+            job['started_at'] = datetime.now().isoformat()
+            # First instance to fire — set up shared logging
+        job['instance_results'][instance_id] = {'status': 'running', 'attempts': 0, 'duration': 0}
+        log_list = job['logs']
 
-def schedule_job(job_id, job_type, run_at, num_instances, interval_minutes=None):
-    """Schedule a job in APScheduler."""
-    if job_type == 'once':
-        trigger = DateTrigger(run_date=run_at)
-    else:
-        trigger = IntervalTrigger(minutes=interval_minutes, start_date=run_at)
+    log_list.append(f"[{time.strftime('%H:%M:%S')}] Instance {instance_id} starting...")
 
-    scheduler.add_job(
-        _run_job,
-        trigger=trigger,
-        args=[job_id, num_instances],
-        id=job_id,
-        replace_existing=True,
+    # Get or create shared logging infrastructure
+    with jobs_lock:
+        mp_log_queue = job.get('_mp_log_queue')
+        stop_event = job.get('stop_event')
+
+    if mp_log_queue is None or stop_event is None:
+        mp_log_queue, stop_event, all_done, collector = _init_job_logging(job_id)
+
+    config = {'verbose': True, 'test': False}
+
+    p = multiprocessing.Process(
+        target=run_scraper,
+        args=(instance_id, config, stop_event, DRIVER_PATH, mp_log_queue)
     )
+    p.start()
+
+    with jobs_lock:
+        if '_processes' not in jobs[job_id]:
+            jobs[job_id]['_processes'] = []
+        jobs[job_id]['_processes'].append((instance_id, p))
+
+    p.join()
+
+    with jobs_lock:
+        inst_result = jobs[job_id]['instance_results'].get(instance_id, {})
+        if inst_result.get('status') == 'running':
+            inst_result['status'] = 'completed'
+
+        # Check if all instances are done
+        total = jobs[job_id]['instances']
+        finished = sum(1 for r in jobs[job_id]['instance_results'].values() if r.get('status') != 'running')
+
+    if finished >= total:
+        with jobs_lock:
+            all_done = jobs[job_id].get('_all_done')
+            collector = jobs[job_id].get('_collector')
+        if all_done and collector:
+            _finalize_job(job_id, all_done, mp_log_queue, collector)
 
 
 # --- Routes ---
@@ -164,13 +218,13 @@ def run_now():
             'instances': num_instances,
             'status': 'starting',
             'instance_results': {},
+            'instance_times': {},
             'logs': [],
             'stop_event': None,
             'started_at': None,
             'finished_at': None,
         }
 
-    # Run in background thread
     t = threading.Thread(target=_run_job, args=(job_id, num_instances), daemon=True)
     t.start()
 
@@ -182,30 +236,44 @@ def schedule():
     data = request.get_json() or {}
     job_type = data.get('type', 'once')  # 'once' or 'recurring'
     date_str = data.get('date')  # 'YYYY-MM-DD'
-    time_str = data.get('time')  # 'HH:MM'
-    num_instances = int(data.get('instances', 1))
+    instance_times = data.get('instance_times', [])  # [{"id": 1, "time": "HH:MM"}, ...]
     interval_minutes = data.get('interval_minutes')  # for recurring
 
-    if not date_str or not time_str:
-        return jsonify({'error': 'date and time are required'}), 400
-
-    try:
-        run_at = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-    except ValueError:
-        return jsonify({'error': 'Invalid date/time format'}), 400
+    if not date_str:
+        return jsonify({'error': 'date is required'}), 400
+    if not instance_times or len(instance_times) == 0:
+        return jsonify({'error': 'At least one instance with a time is required'}), 400
 
     if job_type == 'recurring' and not interval_minutes:
         return jsonify({'error': 'interval_minutes required for recurring jobs'}), 400
 
+    # Parse and validate all instance times
+    parsed_times = {}
+    for entry in instance_times:
+        inst_id = int(entry.get('id', 1))
+        t = entry.get('time')
+        if not t:
+            return jsonify({'error': f'Time missing for instance {inst_id}'}), 400
+        try:
+            run_at = datetime.strptime(f"{date_str} {t}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            return jsonify({'error': f'Invalid time format for instance {inst_id}'}), 400
+        parsed_times[inst_id] = run_at
+
     job_id = str(uuid.uuid4())
+    num_instances = len(parsed_times)
+
+    # Store human-readable instance times for display
+    display_times = {str(k): v.strftime("%H:%M") for k, v in parsed_times.items()}
 
     with jobs_lock:
         jobs[job_id] = {
             'type': job_type,
-            'scheduled_time': run_at.isoformat(),
+            'scheduled_time': min(parsed_times.values()).isoformat(),
             'instances': num_instances,
             'status': 'scheduled',
             'instance_results': {},
+            'instance_times': display_times,
             'logs': [],
             'stop_event': None,
             'started_at': None,
@@ -213,8 +281,27 @@ def schedule():
             'interval_minutes': interval_minutes if job_type == 'recurring' else None,
         }
 
-    schedule_job(job_id, job_type, run_at, num_instances, interval_minutes)
-    return jsonify({'job_id': job_id, 'status': 'scheduled', 'run_at': run_at.isoformat()})
+    # Schedule each instance with its own trigger
+    for inst_id, run_at in parsed_times.items():
+        sched_id = f"{job_id}__inst{inst_id}"
+        if job_type == 'once':
+            trigger = DateTrigger(run_date=run_at)
+        else:
+            trigger = IntervalTrigger(minutes=int(interval_minutes), start_date=run_at)
+
+        scheduler.add_job(
+            _launch_instance,
+            trigger=trigger,
+            args=[job_id, inst_id],
+            id=sched_id,
+            replace_existing=True,
+        )
+
+    return jsonify({
+        'job_id': job_id,
+        'status': 'scheduled',
+        'instance_times': display_times,
+    })
 
 
 @app.route('/api/jobs', methods=['GET'])
@@ -231,9 +318,9 @@ def list_jobs():
                 'started_at': j.get('started_at'),
                 'finished_at': j.get('finished_at'),
                 'instance_results': j['instance_results'],
+                'instance_times': j.get('instance_times', {}),
                 'interval_minutes': j.get('interval_minutes'),
             })
-    # Sort: running first, then scheduled, then completed
     order = {'running': 0, 'starting': 1, 'scheduled': 2, 'completed': 3, 'appointments_found': 3, 'cancelled': 4}
     result.sort(key=lambda x: order.get(x['status'], 5))
     return jsonify(result)
@@ -245,16 +332,17 @@ def cancel_job(job_id):
         if job_id not in jobs:
             return jsonify({'error': 'Job not found'}), 404
         job = jobs[job_id]
-        if job['status'] == 'running':
-            # Stop running instances
+        if job['status'] in ('running', 'starting'):
             if job.get('stop_event'):
                 job['stop_event'].set()
             job['status'] = 'cancelled'
         elif job['status'] == 'scheduled':
-            try:
-                scheduler.remove_job(job_id)
-            except:
-                pass
+            # Remove all per-instance scheduler jobs
+            for inst_id in range(1, job['instances'] + 1):
+                try:
+                    scheduler.remove_job(f"{job_id}__inst{inst_id}")
+                except:
+                    pass
             job['status'] = 'cancelled'
         else:
             return jsonify({'error': 'Job already finished'}), 400
@@ -276,13 +364,11 @@ def stream_logs(job_id):
                 current_logs = job['logs']
                 status = job['status']
 
-            # Send new log lines
             if last_idx < len(current_logs):
                 for line in current_logs[last_idx:]:
                     yield f"data: {line}\n\n"
                 last_idx = len(current_logs)
 
-            # If job is done, send final status and close
             if status in ('completed', 'appointments_found', 'cancelled'):
                 yield f"event: done\ndata: {status}\n\n"
                 return
