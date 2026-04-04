@@ -2,7 +2,6 @@ selenium
 webdriver-manager
 easyocr
 Pillow
-opencv-python-headless
 numpy
 requests
 python-dotenv
