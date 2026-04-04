@@ -1,139 +1,11 @@
 import time
 import base64
-import io
 import os
-import argparse
-import numpy as np
-import cv2
-import easyocr
-import requests
-from PIL import Image
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
-# Webhook URL for n8n
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
-
-if not N8N_WEBHOOK_URL:
-    print("WARNING: N8N_WEBHOOK_URL not found in environment variables.")
-
-# Initialize EasyOCR Reader
-print("Initializing EasyOCR...")
-reader = easyocr.Reader(['en'])
-
-def log(message, verbose=False):
-    """Helper for conditional logging."""
-    if verbose:
-        print(f"[VERBOSE] {message}")
-    else:
-        print(message)
-
-def select_mat_option(driver, wait, select_element, option_index, description="", verbose=False):
-    """Helper to click a mat-select and choose an option by index."""
-    log(f"Targeting dropdown: {description}", verbose)
-    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", select_element)
-    time.sleep(1.5) 
-    try:
-        wait.until(EC.element_to_be_clickable(select_element))
-        select_element.click()
-        log(f"Clicked {description}. Waiting for options...", verbose)
-    except Exception as e:
-        log(f"Failed to click {description}: {e}", verbose)
-        driver.execute_script("arguments[0].click();", select_element)
-
-    time.sleep(2)
-    try:
-        options = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-option")))
-        if len(options) >= option_index:
-            driver.execute_script("arguments[0].click();", options[option_index - 1])
-            log(f"Option {option_index} selected for {description}.", verbose)
-        else:
-            log(f"Error: Found {len(options)} options, needed {option_index}", verbose)
-    except Exception as e:
-        log(f"Error selecting option: {e}", verbose)
-
-def solve_captcha(driver, wait, verbose=False):
-    """Finds the CAPTCHA image, performs OCR with EasyOCR, and fills the input field."""
-    try:
-        log("Locating CAPTCHA image...", verbose)
-        captcha_img = wait.until(EC.presence_of_element_located((By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")))
-        
-        img_base64 = captcha_img.get_attribute("src")
-        if "base64," in img_base64:
-            base64_data = img_base64.split("base64,")[1]
-            img_bytes = base64.b64decode(base64_data)
-            nparr = np.frombuffer(img_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            denoised = cv2.fastNlMeansDenoising(gray, h=10)
-            upscaled = cv2.resize(denoised, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-            
-            results = reader.readtext(upscaled, detail=0, allowlist='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
-            captcha_text = "".join(results).strip()
-            
-            log(f"\n>>> EASYOCR RESULT: '{captcha_text}' <<<\n", verbose)
-            
-            captcha_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Znaki z obrazka']")))
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", captcha_input)
-            time.sleep(1)
-            captcha_input.click()
-            captcha_input.clear()
-            captcha_input.send_keys(captcha_text)
-            
-            log(f"CAPTCHA field filled.", verbose)
-            return True
-    except Exception as e:
-        log(f"Failed to solve CAPTCHA: {e}", verbose)
-        return False
-
-def check_for_failure(driver, verbose=False):
-    """Checks for error messages or popups indicating CAPTCHA failure."""
-    error_keywords = ["Nieprawidłowy", "Błędne", "kod", "Błąd"]
-    error_elements = driver.find_elements(By.XPATH, "//mat-snack-bar-container|//mat-dialog-container|//div[contains(@class, 'error')]")
-    for element in error_elements:
-        if element.is_displayed():
-            log(f"Found error element text: {element.text}", verbose)
-            if any(kw in element.text for kw in error_keywords):
-                return True
-    page_text = driver.page_source
-    if "Nieprawidłowy kod" in page_text or "Błędne znaki" in page_text:
-        log("Detected CAPTCHA error text in page source.", verbose)
-        return True
-    return False
-
-def trigger_webhook(verbose=False):
-    """Triggers the n8n webhook via a POST request."""
-    try:
-        log(f"Triggering n8n webhook at {N8N_WEBHOOK_URL}...", verbose)
-        response = requests.post(N8N_WEBHOOK_URL, json={"status": "appointments_found", "source": "e-konsulat_automation"})
-        if response.status_code == 200:
-            log("Webhook triggered successfully.", verbose)
-        else:
-            log(f"Webhook failed with status code: {response.status_code}", verbose)
-    except Exception as e:
-        log(f"Error triggering webhook: {e}", verbose)
-
-import time
-import base64
-import io
-import os
-import argparse
 import multiprocessing
 import numpy as np
 import cv2
 import easyocr
 import requests
-from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -143,57 +15,41 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-# Webhook URL for n8n
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
-
 if not N8N_WEBHOOK_URL:
     print("WARNING: N8N_WEBHOOK_URL not found in environment variables.")
+
 
 def log_listener(queue, log_file_path):
     """Listens for log messages on a queue and writes them to a file and console."""
     with open(log_file_path, "a", encoding="utf-8") as f:
         while True:
             try:
-                # message is a dict: {'text': string, 'color_text': string}
                 record = queue.get()
-                if record is None: # Termination signal
+                if record is None:
                     break
-                
-                # Write plain text to file
                 f.write(record['text'] + "\n")
                 f.flush()
-                
-                # Print color text to console
                 print(record['color_text'])
             except Exception as e:
                 print(f"Logging error: {e}")
 
+
 def log(message, verbose=False, instance_id=None, log_queue=None):
     """Helper for conditional logging with instance ID, color coding, and queue support."""
-    # ANSI color codes
     RESET = "\033[0m"
     COLORS = [
-        "\033[36m", # Cyan
-        "\033[35m", # Magenta
-        "\033[32m", # Green
-        "\033[33m", # Yellow
-        "\033[34m", # Blue
-        "\033[31m", # Red
-        "\033[96m", # Bright Cyan
-        "\033[95m", # Bright Magenta
-        "\033[92m", # Bright Green
-        "\033[93m", # Bright Yellow
-        "\033[94m", # Bright Blue
-        "\033[91m", # Bright Red
+        "\033[36m", "\033[35m", "\033[32m", "\033[33m",
+        "\033[34m", "\033[31m", "\033[96m", "\033[95m",
+        "\033[92m", "\033[93m", "\033[94m", "\033[91m",
     ]
-    
+
     color = ""
     prefix = ""
     reset = ""
-    
+
     if instance_id is not None:
         color = COLORS[(instance_id - 1) % len(COLORS)]
         prefix = f"[Instance {instance_id}] "
@@ -201,21 +57,21 @@ def log(message, verbose=False, instance_id=None, log_queue=None):
 
     plain_prefix = f"[Instance {instance_id}] " if instance_id is not None else ""
     verbose_tag = "[VERBOSE] " if verbose else ""
-    
+
     plain_text = f"{plain_prefix}{verbose_tag}{message}"
     color_text = f"{color}{prefix}{verbose_tag}{message}{reset}"
 
     if log_queue:
         log_queue.put({'text': plain_text, 'color_text': color_text})
     else:
-        # Fallback if queue is not available (e.g. initial setup)
         print(color_text)
+
 
 def select_mat_option(driver, wait, select_element, option_index, description="", verbose=False, instance_id=None, log_queue=None):
     """Helper to click a mat-select and choose an option by index."""
     log(f"Targeting dropdown: {description}", verbose, instance_id, log_queue)
     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", select_element)
-    time.sleep(1.5) 
+    time.sleep(0.5)
     try:
         wait.until(EC.element_to_be_clickable(select_element))
         select_element.click()
@@ -224,7 +80,7 @@ def select_mat_option(driver, wait, select_element, option_index, description=""
         log(f"Failed to click {description}: {e}", verbose, instance_id, log_queue)
         driver.execute_script("arguments[0].click();", select_element)
 
-    time.sleep(2)
+    time.sleep(0.5)
     try:
         options = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-option")))
         if len(options) >= option_index:
@@ -235,40 +91,42 @@ def select_mat_option(driver, wait, select_element, option_index, description=""
     except Exception as e:
         log(f"Error selecting option: {e}", verbose, instance_id, log_queue)
 
+
 def solve_captcha(driver, wait, reader, verbose=False, instance_id=None, log_queue=None):
     """Finds the CAPTCHA image, performs OCR with EasyOCR, and fills the input field."""
     try:
         log("Locating CAPTCHA image...", verbose, instance_id, log_queue)
         captcha_img = wait.until(EC.presence_of_element_located((By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")))
-        
+
         img_base64 = captcha_img.get_attribute("src")
         if "base64," in img_base64:
             base64_data = img_base64.split("base64,")[1]
             img_bytes = base64.b64decode(base64_data)
             nparr = np.frombuffer(img_bytes, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
+
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             denoised = cv2.fastNlMeansDenoising(gray, h=10)
             upscaled = cv2.resize(denoised, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-            
+
             results = reader.readtext(upscaled, detail=0, allowlist='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
             captcha_text = "".join(results).strip()
-            
-            log(f"\n>>> EASYOCR RESULT: '{captcha_text}' <<<\n", verbose, instance_id, log_queue)
-            
+
+            log(f">>> EASYOCR RESULT: '{captcha_text}' <<<", verbose, instance_id, log_queue)
+
             captcha_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Znaki z obrazka']")))
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", captcha_input)
-            time.sleep(1)
+            time.sleep(0.3)
             captcha_input.click()
             captcha_input.clear()
             captcha_input.send_keys(captcha_text)
-            
-            log(f"CAPTCHA field filled.", verbose, instance_id, log_queue)
+
+            log("CAPTCHA field filled.", verbose, instance_id, log_queue)
             return True
     except Exception as e:
         log(f"Failed to solve CAPTCHA: {e}", verbose, instance_id, log_queue)
         return False
+
 
 def check_for_failure(driver, verbose=False, instance_id=None, log_queue=None):
     """Checks for error messages or popups indicating CAPTCHA failure."""
@@ -285,6 +143,7 @@ def check_for_failure(driver, verbose=False, instance_id=None, log_queue=None):
         return True
     return False
 
+
 def trigger_webhook(verbose=False, instance_id=None, log_queue=None):
     """Triggers the n8n webhook via a POST request."""
     try:
@@ -297,201 +156,258 @@ def trigger_webhook(verbose=False, instance_id=None, log_queue=None):
     except Exception as e:
         log(f"Error triggering webhook: {e}", verbose, instance_id, log_queue)
 
-def run_scraper(instance_id, args, stop_event, driver_path, log_queue):
-    verbose = args.test
-    
-    # Initialize EasyOCR Reader inside each process
+
+def run_scraper(instance_id, config, stop_event, driver_path, log_queue):
+    """
+    Run a single scraper attempt. No outer loop — checks once.
+
+    config: dict with keys:
+        - verbose (bool): enable verbose logging
+        - test (bool): test mode
+
+    Returns a dict with result info:
+        - status: 'no_appointments' | 'appointments_found' | 'error'
+        - attempts: number of CAPTCHA attempts
+        - duration: time in seconds
+        - screenshot: path to screenshot if saved
+    """
+    verbose = config.get('verbose', False)
+    test_mode = config.get('test', False)
+
     log(f"Initializing EasyOCR for Instance {instance_id}...", verbose, instance_id, log_queue)
-    reader = easyocr.Reader(['en'], gpu=False) # GPU False to avoid conflicts
+    reader = easyocr.Reader(['en'], gpu=False)
 
     chrome_options = Options()
-    if not args.test:
-        # If not testing, maybe we want headless to not clutter? 
-        # But user didn't ask, so keeping visible for now.
-        pass
     chrome_options.add_experimental_option("detach", True)
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--start-maximized")
-    
-    # Optional: reduce log noise from selenium/chrome
     chrome_options.add_argument("--log-level=3")
     chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
 
     service = Service(executable_path=driver_path)
     driver = webdriver.Chrome(service=service, options=chrome_options)
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 15)
 
     url = "https://secure.e-konsulat.gov.pl/placowki/164/sprawy-paszportowe/wizyty/formularz"
-    
+
     start_time = time.time()
-    attempts = 0
-    captcha_solved = 0
+    captcha_attempts = 0
+    result = {'status': 'error', 'attempts': 0, 'duration': 0, 'screenshot': None}
 
     try:
-        while not stop_event.is_set():
-            attempts += 1
-            log(f"\n--- Starting attempt #{attempts} at {time.strftime('%H:%M:%S')} ---", verbose, instance_id, log_queue)
-            log(f"Opening {url}...", verbose, instance_id, log_queue)
-            driver.get(url)
+        if stop_event.is_set():
+            driver.quit()
+            result['status'] = 'stopped'
+            return result
 
-            log("Waiting 8 seconds for page load...", verbose, instance_id, log_queue)
-            time.sleep(8)
-            if stop_event.is_set(): break
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
+        log(f"Opening {url}...", verbose, instance_id, log_queue)
+        driver.get(url)
 
-            # Handle dropdowns
-            try:
-                all_selects = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-select")))
-                log(f"Found {len(all_selects)} mat-select elements.", verbose, instance_id, log_queue)
+        # Wait for page elements instead of fixed sleep
+        log("Waiting for page to load...", verbose, instance_id, log_queue)
+        wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "mat-select")))
+        time.sleep(1)
+        if stop_event.is_set():
+            driver.quit()
+            result['status'] = 'stopped'
+            return result
+
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(0.5)
+
+        # Handle initial dropdowns
+        try:
+            all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
+            log(f"Found {len(all_selects)} mat-select elements.", verbose, instance_id, log_queue)
+            if len(all_selects) >= 3:
+                select_mat_option(driver, wait, all_selects[1], 2, "First Form Dropdown", verbose, instance_id, log_queue)
+                time.sleep(1)
+                if stop_event.is_set():
+                    driver.quit()
+                    result['status'] = 'stopped'
+                    return result
+                all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
                 if len(all_selects) >= 3:
-                    select_mat_option(driver, wait, all_selects[1], 2, "First Form Dropdown", verbose, instance_id, log_queue)
-                    time.sleep(5)
-                    if stop_event.is_set(): break
-                    all_selects = driver.find_elements(By.TAG_NAME, "mat-select")
-                    if len(all_selects) >= 3:
-                        select_mat_option(driver, wait, all_selects[2], 2, "Second Form Dropdown", verbose, instance_id, log_queue)
-                else:
-                    log("Could not find expected dropdowns. Refreshing...", verbose, instance_id, log_queue)
-                    if args.test: break
-                    continue
+                    select_mat_option(driver, wait, all_selects[2], 2, "Second Form Dropdown", verbose, instance_id, log_queue)
+            else:
+                log("Could not find expected dropdowns.", verbose, instance_id, log_queue)
+                result['status'] = 'error'
+                result['duration'] = time.time() - start_time
+                driver.quit()
+                return result
+        except Exception as e:
+            log(f"Error selecting options: {e}", verbose, instance_id, log_queue)
+            result['status'] = 'error'
+            result['duration'] = time.time() - start_time
+            driver.quit()
+            return result
+
+        time.sleep(1)
+        if stop_event.is_set():
+            driver.quit()
+            result['status'] = 'stopped'
+            return result
+
+        # CAPTCHA retry loop (single attempt at checking appointments, but CAPTCHA may need retries)
+        success = False
+        while not stop_event.is_set():
+            solve_captcha(driver, wait, reader, verbose, instance_id, log_queue)
+            captcha_attempts += 1
+            log("Clicking 'Pobierz terminy wizyty'...", verbose, instance_id, log_queue)
+            try:
+                submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")))
+                driver.execute_script("arguments[0].click();", submit_button)
             except Exception as e:
-                log(f"Error selecting options: {e}. Refreshing...", verbose, instance_id, log_queue)
-                if args.test: break
-                continue
-            
-            time.sleep(3)
-            if stop_event.is_set(): break
-            
-            success = False
-            while not stop_event.is_set():
-                solve_captcha(driver, wait, reader, verbose, instance_id, log_queue)
-                captcha_solved += 1
-                log("Clicking 'Pobierz terminy wizyty'...", verbose, instance_id, log_queue)
-                try:
-                    submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")))
-                    driver.execute_script("arguments[0].click();", submit_button)
-                except Exception as e:
-                    log(f"Error finding submit button: {e}. Restarting process...", verbose, instance_id, log_queue)
-                    break # Restart whole process
+                log(f"Error finding submit button: {e}", verbose, instance_id, log_queue)
+                break
 
-                log("Waiting for response...", verbose, instance_id, log_queue)
-                time.sleep(5)
-                if stop_event.is_set(): break
-                
-                # 1. Check for CAPTCHA failure
-                if check_for_failure(driver, verbose, instance_id, log_queue):
-                    log("CAPTCHA failure detected. Retrying...", verbose, instance_id, log_queue)
-                    try:
-                        captcha_img = driver.find_element(By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")
-                        captcha_img.click()
-                        time.sleep(2)
-                    except: pass
-                    continue
-                
-                # 2. Check for "No appointments" text
-                no_appointments_text = "Chwilowo wszystkie udostępnione terminy zostały zarezerwowane, prosimy spróbować umówić wizytę w terminie późniejszym."
-                if no_appointments_text in driver.page_source:
-                    log("\n[RESULT] No appointments available.", verbose, instance_id, log_queue)
-                    if args.test:
-                        success = False
-                        break # Break inner loop
-                    else:
-                        log("Refreshing page and restarting process...", verbose, instance_id, log_queue)
-                        break # Break inner loop to restart the whole process
-                
-                # 3. Check for the two new dropdowns that appear when appointments are available
-                current_selects = driver.find_elements(By.TAG_NAME, "mat-select")
-                if len(current_selects) >= 5:
-                    log(f"\n[ALERT] {len(current_selects)} dropdowns found! (Expected 3 initial + 2 new). Appointments are available!", verbose, instance_id, log_queue)
-                    trigger_webhook(verbose, instance_id, log_queue)
-                    stop_event.set() # STOP ALL OTHER INSTANCES
-                    success = True
-                    break
+            log("Waiting for response...", verbose, instance_id, log_queue)
+            time.sleep(2)
+            if stop_event.is_set():
+                break
 
-                # 4. Check if the button is still there (CAPTCHA failure or slow load)
+            # 1. Check for CAPTCHA failure
+            if check_for_failure(driver, verbose, instance_id, log_queue):
+                log("CAPTCHA failure detected. Retrying...", verbose, instance_id, log_queue)
                 try:
-                    submit_button = driver.find_element(By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")
-                    if submit_button.is_displayed():
-                        log("Submit button still present, retrying CAPTCHA...", verbose, instance_id, log_queue)
-                        continue
+                    captcha_img = driver.find_element(By.XPATH, "//img[@alt='Weryfikacja obrazkowa']")
+                    captcha_img.click()
+                    time.sleep(0.5)
                 except:
-                    # Button is gone but we haven't found the dropdowns yet? 
-                    # This might happen during page transition.
-                    log("Button is gone, waiting for dropdowns to appear...", verbose, instance_id, log_queue)
-                    time.sleep(2)
-                    continue
+                    pass
+                continue
 
-            if args.test:
-                # In test mode, we take a screenshot no matter what
+            # 2. Check for "No appointments" text
+            no_appointments_text = "Chwilowo wszystkie udostępnione terminy zostały zarezerwowane, prosimy spróbować umówić wizytę w terminie późniejszym."
+            if no_appointments_text in driver.page_source:
+                log("[RESULT] No appointments available.", verbose, instance_id, log_queue)
+                success = False
+                break
+
+            # 3. Check for appointment dropdowns (5+ mat-selects)
+            current_selects = driver.find_elements(By.TAG_NAME, "mat-select")
+            if len(current_selects) >= 5:
+                log(f"[ALERT] {len(current_selects)} dropdowns found! Appointments are available!", verbose, instance_id, log_queue)
+
+                # Auto-select first option in the two new appointment dropdowns
+                try:
+                    log("Selecting first option in Appointment Dropdown 1...", verbose, instance_id, log_queue)
+                    select_mat_option(driver, wait, current_selects[3], 1, "Appointment Dropdown 1", verbose, instance_id, log_queue)
+                    time.sleep(0.5)
+
+                    # Re-query after DOM change
+                    current_selects = driver.find_elements(By.TAG_NAME, "mat-select")
+                    log("Selecting first option in Appointment Dropdown 2...", verbose, instance_id, log_queue)
+                    select_mat_option(driver, wait, current_selects[4], 1, "Appointment Dropdown 2", verbose, instance_id, log_queue)
+                    time.sleep(0.5)
+
+                    # Click the submit/confirm button
+                    log("Clicking submit/confirm button...", verbose, instance_id, log_queue)
+                    confirm_btn = wait.until(EC.element_to_be_clickable(
+                        (By.XPATH, "//button[contains(., 'Zatwierdź') or contains(., 'Rezerwuj') or contains(., 'Zapisz') or contains(., 'Potwierdź')]")
+                    ))
+                    driver.execute_script("arguments[0].click();", confirm_btn)
+                    time.sleep(1)
+                    log("Appointment submitted!", verbose, instance_id, log_queue)
+                except Exception as e:
+                    log(f"Error during appointment auto-submit: {e}", verbose, instance_id, log_queue)
+
+                trigger_webhook(verbose, instance_id, log_queue)
+                stop_event.set()
+                success = True
+                break
+
+            # 4. Check if submit button still present (retry CAPTCHA)
+            try:
+                submit_button = driver.find_element(By.XPATH, "//button[contains(., 'Pobierz terminy wizyty')]")
+                if submit_button.is_displayed():
+                    log("Submit button still present, retrying CAPTCHA...", verbose, instance_id, log_queue)
+                    continue
+            except:
+                log("Button gone, waiting for dropdowns...", verbose, instance_id, log_queue)
+                time.sleep(1)
+                continue
+
+        # Save results
+        duration = time.time() - start_time
+        result['attempts'] = captcha_attempts
+        result['duration'] = duration
+
+        if success:
+            result['status'] = 'appointments_found'
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            os.makedirs("results", exist_ok=True)
+            screenshot_name = f"results/appointments_found_inst{instance_id}_{timestamp}.png"
+            try:
+                driver.save_screenshot(screenshot_name)
+                result['screenshot'] = screenshot_name
+                log(f"Screenshot saved as {screenshot_name}", False, instance_id, log_queue)
+            except Exception as e:
+                log(f"Failed to save screenshot: {e}", False, instance_id, log_queue)
+
+            log("\n" + "=" * 40, False, instance_id, log_queue)
+            log("SUCCESSFUL RUN SUMMARY", False, instance_id, log_queue)
+            log(f"Total time: {duration / 60:.2f} minutes", False, instance_id, log_queue)
+            log(f"CAPTCHA attempts: {captcha_attempts}", False, instance_id, log_queue)
+            log("=" * 40, False, instance_id, log_queue)
+
+            # Keep browser open
+            while not stop_event.is_set():
+                time.sleep(1)
+        else:
+            result['status'] = 'no_appointments'
+            if test_mode:
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
                 os.makedirs("results", exist_ok=True)
                 screenshot_name = f"results/test_result_inst{instance_id}_{timestamp}.png"
                 try:
                     driver.save_screenshot(screenshot_name)
+                    result['screenshot'] = screenshot_name
                     log(f"Test screenshot saved as {screenshot_name}", verbose, instance_id, log_queue)
                 except Exception as e:
                     log(f"Failed to save test screenshot: {e}", verbose, instance_id, log_queue)
-                
-                end_time = time.time()
-                duration = end_time - start_time
-                log("\n" + "="*40, verbose, instance_id, log_queue)
-                log("TEST RUN SUMMARY", verbose, instance_id, log_queue)
-                log(f"Status: {'SUCCESS' if success else 'FAILURE/NO APPOINTMENTS'}", verbose, instance_id, log_queue)
-                log(f"Total time: {duration/60:.2f} minutes", verbose, instance_id, log_queue)
-                log(f"CAPTCHA attempts: {captcha_solved}", verbose, instance_id, log_queue)
-                log("="*40, verbose, instance_id, log_queue)
-                return
 
-            if success:
-                # This block only reached if not in test mode and success is True
-                timestamp = time.strftime("%Y%m%d-%H%M%S")
-                os.makedirs("results", exist_ok=True)
-                screenshot_name = f"results/appointments_found_inst{instance_id}_{timestamp}.png"
-                try:
-                    driver.save_screenshot(screenshot_name)
-                    log(f"Screenshot saved as {screenshot_name}", False, instance_id, log_queue)
-                except Exception as e:
-                    log(f"Failed to save screenshot: {e}", False, instance_id, log_queue)
-
-                end_time = time.time()
-                duration = end_time - start_time
-                log("\n" + "="*40, False, instance_id, log_queue)
-                log(f"SUCCESSFUL RUN SUMMARY", False, instance_id, log_queue)
-                log(f"Total time: {duration/60:.2f} minutes", False, instance_id, log_queue)
-                log(f"Total attempts: {attempts}", False, instance_id, log_queue)
-                log(f"CAPTCHA attempts: {captcha_solved}", False, instance_id, log_queue)
-                log("="*40, False, instance_id, log_queue)
-                # Keep browser open as before
-                while True: time.sleep(1)
-
-        if stop_event.is_set() and not success:
-            log("Stopping instance because another one succeeded or user interrupted.", False, instance_id, log_queue)
+            log("\n" + "=" * 40, False, instance_id, log_queue)
+            log("RUN SUMMARY", False, instance_id, log_queue)
+            log(f"Status: {'NO APPOINTMENTS' if result['status'] == 'no_appointments' else result['status']}", False, instance_id, log_queue)
+            log(f"Total time: {duration / 60:.2f} minutes", False, instance_id, log_queue)
+            log(f"CAPTCHA attempts: {captcha_attempts}", False, instance_id, log_queue)
+            log("=" * 40, False, instance_id, log_queue)
             driver.quit()
 
     except Exception as e:
         log(f"An error occurred: {e}", False, instance_id, log_queue)
-        driver.quit()
+        result['status'] = 'error'
+        result['duration'] = time.time() - start_time
+        result['attempts'] = captcha_attempts
+        try:
+            driver.quit()
+        except:
+            pass
+
+    return result
+
 
 def main():
+    """CLI entry point — still works for direct command-line usage."""
+    import argparse
     parser = argparse.ArgumentParser(description="E-Konsulat Appointment Scraper")
-    parser.add_argument("-t", "--test", action="store_true", help="Run once for testing, take a screenshot, and use extensive logging")
-    parser.add_argument("-n", "--instances", type=int, default=1, help="Number of parallel instances to run")
+    parser.add_argument("-t", "--test", action="store_true", help="Run once with verbose logging")
+    parser.add_argument("-n", "--instances", type=int, default=1, help="Number of parallel instances")
     args = parser.parse_args()
 
+    config = {'verbose': args.test, 'test': args.test}
     num_instances = args.instances
-    
-    # Create logs directory if it doesn't exist
+
     os.makedirs("logs", exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     log_file_path = f"logs/log_{timestamp}.txt"
 
-    # Setup multiprocessing logging queue
     log_queue = multiprocessing.Queue()
     listener = multiprocessing.Process(target=log_listener, args=(log_queue, log_file_path))
     listener.start()
 
-    log(f"Starting {num_instances} parallel instances...", log_queue=log_queue)
+    log(f"Starting {num_instances} instance(s)...", log_queue=log_queue)
     log(f"Log file: {log_file_path}", log_queue=log_queue)
 
     print("Pre-installing ChromeDriver...")
@@ -503,28 +419,27 @@ def main():
 
     try:
         for i in range(num_instances):
-            p = multiprocessing.Process(target=run_scraper, args=(i+1, args, stop_event, driver_path, log_queue))
+            p = multiprocessing.Process(target=run_scraper, args=(i + 1, config, stop_event, driver_path, log_queue))
             p.start()
             processes.append(p)
-            time.sleep(2) # Stagger start
+            if i < num_instances - 1:
+                time.sleep(1)
 
-        # Wait for processes
         for p in processes:
             p.join()
 
     except KeyboardInterrupt:
-        log("\nMain script interrupted by user. Stopping all instances...", log_queue=log_queue)
+        log("\nInterrupted by user. Stopping all instances...", log_queue=log_queue)
         stop_event.set()
         for p in processes:
             p.terminate()
             p.join()
         log("All instances stopped.", log_queue=log_queue)
     finally:
-        # Signal logger to stop and wait for it
         log_queue.put(None)
         listener.join()
 
+
 if __name__ == "__main__":
-    # Fix for multiprocessing with easyocr and spawn
     multiprocessing.freeze_support()
     main()

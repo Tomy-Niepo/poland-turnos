@@ -6,3 +6,5 @@ opencv-python-headless
 numpy
 requests
 python-dotenv
+flask
+apscheduler

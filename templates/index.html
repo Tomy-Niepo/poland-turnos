@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Konsulat Appointment Scheduler</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        h1 { font-size: 1.5rem; margin-bottom: 20px; color: #38bdf8; }
+        h2 { font-size: 1.1rem; margin-bottom: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; font-weight: 500; }
+
+        .container { max-width: 1000px; margin: 0 auto; }
+
+        .card {
+            background: #1e293b;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #334155;
+        }
+
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
+
+        label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 4px; }
+        input, select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #475569;
+            border-radius: 6px;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-size: 0.9rem;
+            margin-bottom: 12px;
+        }
+        input:focus, select:focus { outline: none; border-color: #38bdf8; }
+
+        .row { display: flex; gap: 12px; align-items: flex-end; }
+        .row > div { flex: 1; }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-success { background: #059669; color: white; }
+        .btn-success:hover { background: #047857; }
+        .btn-danger { background: #dc2626; color: white; font-size: 0.8rem; padding: 6px 12px; }
+        .btn-danger:hover { background: #b91c1c; }
+        .btn-sm { font-size: 0.8rem; padding: 6px 12px; }
+
+        .toggle-group {
+            display: flex;
+            gap: 0;
+            margin-bottom: 12px;
+        }
+        .toggle-group button {
+            flex: 1;
+            border-radius: 0;
+            background: #334155;
+            color: #94a3b8;
+            border: 1px solid #475569;
+        }
+        .toggle-group button:first-child { border-radius: 6px 0 0 6px; }
+        .toggle-group button:last-child { border-radius: 0 6px 6px 0; }
+        .toggle-group button.active { background: #2563eb; color: white; border-color: #2563eb; }
+
+        .interval-row { display: none; }
+        .interval-row.show { display: block; }
+
+        /* Jobs table */
+        table { width: 100%; border-collapse: collapse; }
+        th {
+            text-align: left;
+            padding: 8px 10px;
+            font-size: 0.75rem;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #334155;
+        }
+        td {
+            padding: 10px;
+            border-bottom: 1px solid #1e293b;
+            font-size: 0.85rem;
+        }
+        tr:hover td { background: #1e293b; }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge-running { background: #1e40af; color: #93c5fd; }
+        .badge-starting { background: #1e40af; color: #93c5fd; }
+        .badge-scheduled { background: #854d0e; color: #fcd34d; }
+        .badge-completed { background: #064e3b; color: #6ee7b7; }
+        .badge-found { background: #059669; color: #ffffff; }
+        .badge-cancelled { background: #4b5563; color: #d1d5db; }
+        .badge-error { background: #7f1d1d; color: #fca5a5; }
+
+        /* Logs panel */
+        .logs-panel {
+            display: none;
+            margin-top: 12px;
+        }
+        .logs-panel.show { display: block; }
+        .logs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .log-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.78rem;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-line { color: #94a3b8; }
+        .log-line.alert { color: #34d399; font-weight: bold; }
+        .log-line.error { color: #f87171; }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+        }
+
+        .actions { display: flex; gap: 6px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>E-Konsulat Appointment Scheduler</h1>
+
+        <div class="grid-2">
+            <!-- Quick Run -->
+            <div class="card">
+                <h2>Quick Run</h2>
+                <label>Number of Instances</label>
+                <input type="number" id="quickInstances" min="1" max="10" value="1">
+                <button class="btn-success" onclick="runNow()" style="width:100%">Run Now</button>
+            </div>
+
+            <!-- Schedule -->
+            <div class="card">
+                <h2>Schedule a Run</h2>
+                <div class="toggle-group">
+                    <button class="active" onclick="setScheduleType('once', this)">One-time</button>
+                    <button onclick="setScheduleType('recurring', this)">Recurring</button>
+                </div>
+                <div class="row">
+                    <div>
+                        <label>Date</label>
+                        <input type="date" id="schedDate">
+                    </div>
+                    <div>
+                        <label>Time</label>
+                        <input type="time" id="schedTime">
+                    </div>
+                </div>
+                <label>Instances</label>
+                <input type="number" id="schedInstances" min="1" max="10" value="1">
+                <div class="interval-row" id="intervalRow">
+                    <label>Repeat every (minutes)</label>
+                    <input type="number" id="schedInterval" min="1" value="60">
+                </div>
+                <button class="btn-primary" onclick="scheduleJob()" style="width:100%">Schedule</button>
+            </div>
+        </div>
+
+        <!-- Jobs List -->
+        <div class="card">
+            <h2>Jobs</h2>
+            <div id="jobsContainer">
+                <div class="empty-state">No jobs yet. Run or schedule one above.</div>
+            </div>
+        </div>
+
+        <!-- Logs Panel -->
+        <div class="card logs-panel" id="logsPanel">
+            <div class="logs-header">
+                <h2 id="logsPanelTitle">Logs</h2>
+                <button class="btn-danger btn-sm" onclick="closeLogs()">Close</button>
+            </div>
+            <div class="log-box" id="logBox"></div>
+        </div>
+    </div>
+
+    <script>
+        let scheduleType = 'once';
+        let activeLogSource = null;
+        let pollInterval = null;
+
+        // Set default date/time to now
+        const now = new Date();
+        document.getElementById('schedDate').value = now.toISOString().split('T')[0];
+        document.getElementById('schedTime').value = now.toTimeString().slice(0, 5);
+
+        function setScheduleType(type, btn) {
+            scheduleType = type;
+            document.querySelectorAll('.toggle-group button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('intervalRow').classList.toggle('show', type === 'recurring');
+        }
+
+        async function runNow() {
+            const instances = parseInt(document.getElementById('quickInstances').value) || 1;
+            const res = await fetch('/api/run-now', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({instances})
+            });
+            const data = await res.json();
+            refreshJobs();
+            openLogs(data.job_id);
+        }
+
+        async function scheduleJob() {
+            const date = document.getElementById('schedDate').value;
+            const time = document.getElementById('schedTime').value;
+            const instances = parseInt(document.getElementById('schedInstances').value) || 1;
+            const interval = parseInt(document.getElementById('schedInterval').value) || 60;
+
+            if (!date || !time) { alert('Please set date and time'); return; }
+
+            const body = {
+                type: scheduleType,
+                date, time, instances,
+            };
+            if (scheduleType === 'recurring') body.interval_minutes = interval;
+
+            const res = await fetch('/api/schedule', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (data.error) { alert(data.error); return; }
+            refreshJobs();
+        }
+
+        async function cancelJob(jobId) {
+            await fetch(`/api/jobs/${jobId}`, {method: 'DELETE'});
+            refreshJobs();
+        }
+
+        function statusBadge(status) {
+            const cls = {
+                running: 'badge-running',
+                starting: 'badge-starting',
+                scheduled: 'badge-scheduled',
+                completed: 'badge-completed',
+                appointments_found: 'badge-found',
+                cancelled: 'badge-cancelled',
+                error: 'badge-error',
+            }[status] || 'badge-completed';
+            const label = status === 'appointments_found' ? 'FOUND!' : status.toUpperCase();
+            return `<span class="badge ${cls}">${label}</span>`;
+        }
+
+        function formatTime(iso) {
+            if (!iso) return '-';
+            const d = new Date(iso);
+            return d.toLocaleString();
+        }
+
+        async function refreshJobs() {
+            const res = await fetch('/api/jobs');
+            const jobs = await res.json();
+            const container = document.getElementById('jobsContainer');
+
+            if (jobs.length === 0) {
+                container.innerHTML = '<div class="empty-state">No jobs yet. Run or schedule one above.</div>';
+                return;
+            }
+
+            let html = `<table>
+                <thead><tr>
+                    <th>ID</th><th>Type</th><th>Scheduled</th><th>Instances</th><th>Status</th><th>Actions</th>
+                </tr></thead><tbody>`;
+
+            for (const j of jobs) {
+                const canCancel = ['running', 'starting', 'scheduled'].includes(j.status);
+                const shortId = j.job_id.slice(0, 8);
+                html += `<tr>
+                    <td><code>${shortId}</code></td>
+                    <td>${j.type}${j.interval_minutes ? ` (${j.interval_minutes}m)` : ''}</td>
+                    <td>${formatTime(j.scheduled_time)}</td>
+                    <td>${j.instances}</td>
+                    <td>${statusBadge(j.status)}</td>
+                    <td class="actions">
+                        <button class="btn-primary btn-sm" onclick="openLogs('${j.job_id}')">Logs</button>
+                        ${canCancel ? `<button class="btn-danger btn-sm" onclick="cancelJob('${j.job_id}')">Cancel</button>` : ''}
+                    </td>
+                </tr>`;
+            }
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        function openLogs(jobId) {
+            // Close existing SSE
+            if (activeLogSource) {
+                activeLogSource.close();
+                activeLogSource = null;
+            }
+
+            const panel = document.getElementById('logsPanel');
+            const box = document.getElementById('logBox');
+            const title = document.getElementById('logsPanelTitle');
+
+            panel.classList.add('show');
+            title.textContent = `Logs - ${jobId.slice(0, 8)}`;
+            box.innerHTML = '';
+
+            const source = new EventSource(`/api/logs/${jobId}`);
+            activeLogSource = source;
+
+            source.onmessage = (e) => {
+                const line = document.createElement('div');
+                line.className = 'log-line';
+                const text = e.data;
+                if (text.includes('[ALERT]') || text.includes('FOUND') || text.includes('SUCCESS')) {
+                    line.classList.add('alert');
+                } else if (text.includes('Error') || text.includes('error') || text.includes('FAIL')) {
+                    line.classList.add('error');
+                }
+                line.textContent = text;
+                box.appendChild(line);
+                box.scrollTop = box.scrollHeight;
+            };
+
+            source.addEventListener('done', (e) => {
+                const line = document.createElement('div');
+                line.className = 'log-line alert';
+                line.textContent = `--- Job finished: ${e.data} ---`;
+                box.appendChild(line);
+                source.close();
+                activeLogSource = null;
+                refreshJobs();
+            });
+
+            source.onerror = () => {
+                source.close();
+                activeLogSource = null;
+            };
+        }
+
+        function closeLogs() {
+            if (activeLogSource) {
+                activeLogSource.close();
+                activeLogSource = null;
+            }
+            document.getElementById('logsPanel').classList.remove('show');
+        }
+
+        // Auto-refresh jobs list every 5 seconds
+        refreshJobs();
+        setInterval(refreshJobs, 5000);
+    </script>
+</body>
+</html>
